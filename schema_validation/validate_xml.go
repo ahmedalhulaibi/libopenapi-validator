@@ -169,11 +169,6 @@ typesLoop:
 					convertedValue = converted
 					break typesLoop
 				}
-
-				// Boolean coercion failed — the value is not a valid boolean string.
-				// Keep the original string value so the downstream JSON schema validator
-				// rejects it as a type mismatch (string where boolean expected).
-				convertedValue = textValue
 			}
 
 		case helpers.Array:
