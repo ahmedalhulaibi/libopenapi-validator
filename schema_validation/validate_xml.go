@@ -169,6 +169,11 @@ typesLoop:
 					convertedValue = converted
 					break typesLoop
 				}
+
+				// Boolean coercion failed — the value is not a valid boolean string.
+				// Keep the original string value so the downstream JSON schema validator
+				// rejects it as a type mismatch (string where boolean expected).
+				convertedValue = textValue
 			}
 
 		case helpers.Array:
@@ -232,11 +237,19 @@ func applyXMLTransformations(data any, schema *base.Schema, xmlNsMap *map[string
 		return data, nil
 	}
 
-	// unwrap root element if xml.name is set on schema
-	if schema.XML != nil && schema.XML.Name != "" {
-		if dataMap, ok := data.(map[string]any); ok {
+	// unwrap root element
+	if dataMap, ok := data.(map[string]any); ok {
+		if schema.XML != nil && schema.XML.Name != "" {
+			// explicit xml.name — unwrap that specific element
 			if wrapped, exists := dataMap[schema.XML.Name]; exists {
 				data = wrapped
+			}
+		} else if len(dataMap) == 1 {
+			// no xml.name — unwrap single root element (standard XML→JSON pattern)
+			for _, wrapped := range dataMap {
+				data = wrapped
+
+				break
 			}
 		}
 	}
