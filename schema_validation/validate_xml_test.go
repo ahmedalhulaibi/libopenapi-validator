@@ -1252,3 +1252,58 @@ func TestApplyXMLTransformations_NilPropSchema(t *testing.T) {
 	assert.Len(t, errs, 0)
 	assert.NotNil(t, result)
 }
+
+func TestApplyXMLTransformations_UnwrapSingleKeyRootWithoutXMLName(t *testing.T) {
+	// When a schema has no xml.name annotation, XML bodies are wrapped in an
+	// arbitrary root element (e.g., <root>). goxml2json produces {"root":{...}}.
+	// The validator must unwrap this single-key root to validate the inner fields.
+
+	spec := `openapi: 3.0.0
+info:
+  title: test
+  version: 0.0.1
+paths:
+  /test:
+    put:
+      requestBody:
+        content:
+          application/xml:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 10
+                active:
+                  type: boolean
+      responses:
+        '200':
+          description: ok`
+
+	doc, err := libopenapi.NewDocument([]byte(spec))
+	assert.NoError(t, err)
+
+	v3Doc, err := doc.BuildV3Model()
+	assert.NoError(t, err)
+
+	schema := v3Doc.Model.Paths.PathItems.GetOrZero("/test").Put.RequestBody.
+		Content.GetOrZero("application/xml").Schema.Schema()
+
+	validator := NewXMLValidator()
+
+	// Valid: boolean true, short name
+	valid, errs := validator.ValidateXMLString(schema, "<root><name>hi</name><active>true</active></root>")
+	assert.True(t, valid, "expected valid, got errors: %v", errs)
+
+	// Invalid: boolean field with non-boolean string
+	valid, errs = validator.ValidateXMLString(schema, "<root><active>fake</active></root>")
+	assert.False(t, valid, "expected invalid for boolean 'fake'")
+
+	// Invalid: name exceeds maxLength
+	valid, errs = validator.ValidateXMLString(schema, "<root><name>this is way too long</name></root>")
+	assert.False(t, valid, "expected invalid for name exceeding maxLength")
+
+	// Valid: different root element name (should still unwrap)
+	valid, errs = validator.ValidateXMLString(schema, "<request><name>ok</name><active>false</active></request>")
+	assert.True(t, valid, "expected valid with arbitrary root element name, got errors: %v", errs)
+}
