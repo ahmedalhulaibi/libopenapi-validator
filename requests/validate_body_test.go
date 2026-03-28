@@ -1854,3 +1854,114 @@ paths:
 	assert.True(t, valid)
 	assert.Len(t, errors, 0)
 }
+
+func TestValidateBody_URLEncoded_OneOfDiscriminator(t *testing.T) {
+	spec := `openapi: 3.0.3
+info:
+  title: Notification API
+  version: "1.0"
+paths:
+  /notifications:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/EmailNotification'
+                - $ref: '#/components/schemas/SmsNotification'
+              discriminator:
+                propertyName: type
+                mapping:
+                  email: '#/components/schemas/EmailNotification'
+                  sms: '#/components/schemas/SmsNotification'
+      responses:
+        '200':
+          description: OK
+components:
+  schemas:
+    EmailNotification:
+      type: object
+      required: [type, to, subject]
+      properties:
+        type:
+          type: string
+          enum: [email]
+        to:
+          type: string
+          format: email
+        subject:
+          type: string
+    SmsNotification:
+      type: object
+      required: [type, phone, message]
+      properties:
+        type:
+          type: string
+          enum: [sms]
+        phone:
+          type: string
+        message:
+          type: string`
+
+	doc, _ := libopenapi.NewDocument([]byte(spec))
+	m, _ := doc.BuildV3Model()
+	v := NewRequestBodyValidator(&m.Model, config.WithURLEncodedBodyValidation())
+
+	t.Run("valid SMS via request body", func(t *testing.T) {
+		body := "type=sms&phone=%2B1234567890&message=hello"
+		request, _ := http.NewRequest(http.MethodPost, "https://api.example.com/notifications",
+			bytes.NewBuffer([]byte(body)))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		valid, errors := v.ValidateRequestBody(request)
+		assert.True(t, valid, "valid SMS body should pass request validation")
+		assert.Empty(t, errors)
+	})
+
+	t.Run("valid email via request body", func(t *testing.T) {
+		body := "type=email&to=user%40example.com&subject=Hello"
+		request, _ := http.NewRequest(http.MethodPost, "https://api.example.com/notifications",
+			bytes.NewBuffer([]byte(body)))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		valid, errors := v.ValidateRequestBody(request)
+		assert.True(t, valid, "valid email body should pass request validation")
+		assert.Empty(t, errors)
+	})
+
+	t.Run("invalid discriminator via request body", func(t *testing.T) {
+		body := "type=push&token=abc123&title=Alert"
+		request, _ := http.NewRequest(http.MethodPost, "https://api.example.com/notifications",
+			bytes.NewBuffer([]byte(body)))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		valid, errors := v.ValidateRequestBody(request)
+		assert.False(t, valid, "unknown discriminator value should fail")
+		assert.NotEmpty(t, errors)
+	})
+
+	t.Run("wrong variant fields via request body", func(t *testing.T) {
+		// type=sms but providing email fields
+		body := "type=sms&to=user%40example.com&subject=Hello"
+		request, _ := http.NewRequest(http.MethodPost, "https://api.example.com/notifications",
+			bytes.NewBuffer([]byte(body)))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		valid, errors := v.ValidateRequestBody(request)
+		assert.False(t, valid, "SMS type with email fields should fail")
+		assert.NotEmpty(t, errors)
+	})
+
+	t.Run("missing discriminator via request body", func(t *testing.T) {
+		body := "phone=%2B1234567890&message=hello"
+		request, _ := http.NewRequest(http.MethodPost, "https://api.example.com/notifications",
+			bytes.NewBuffer([]byte(body)))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		valid, errors := v.ValidateRequestBody(request)
+		assert.False(t, valid, "missing discriminator should fail")
+		assert.NotEmpty(t, errors)
+	})
+}

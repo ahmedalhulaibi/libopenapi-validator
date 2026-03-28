@@ -495,3 +495,118 @@ paths:
 	valid, _ = v.ValidateURLEncodedString(nil, nil, "a=1")
 	assert.False(t, valid)
 }
+
+func TestURLEncoded_OneOfDiscriminator(t *testing.T) {
+	spec := `openapi: 3.0.3
+info:
+  title: Notification API
+  version: "1.0"
+paths:
+  /notifications:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/EmailNotification'
+                - $ref: '#/components/schemas/SmsNotification'
+              discriminator:
+                propertyName: type
+                mapping:
+                  email: '#/components/schemas/EmailNotification'
+                  sms: '#/components/schemas/SmsNotification'
+      responses:
+        '200':
+          description: OK
+components:
+  schemas:
+    EmailNotification:
+      type: object
+      required: [type, to, subject]
+      properties:
+        type:
+          type: string
+          enum: [email]
+        to:
+          type: string
+          format: email
+        subject:
+          type: string
+    SmsNotification:
+      type: object
+      required: [type, phone, message]
+      properties:
+        type:
+          type: string
+          enum: [sms]
+        phone:
+          type: string
+        message:
+          type: string`
+
+	doc, err := libopenapi.NewDocument([]byte(spec))
+	assert.NoError(t, err)
+
+	v3Doc, err := doc.BuildV3Model()
+	assert.NoError(t, err)
+
+	contentSchema := v3Doc.Model.Paths.PathItems.GetOrZero("/notifications").Post.RequestBody.Content.GetOrZero("application/x-www-form-urlencoded")
+	schema := contentSchema.Schema.Schema()
+	encoding := contentSchema.Encoding
+
+	v := NewURLEncodedValidator()
+
+	t.Run("valid SMS notification", func(t *testing.T) {
+		valid, errs := v.ValidateURLEncodedStringWithVersion(
+			schema, encoding,
+			"type=sms&phone=%2B1234567890&message=hello",
+			3.0,
+		)
+		assert.True(t, valid, "valid SMS body should pass")
+		assert.Empty(t, errs)
+	})
+
+	t.Run("valid email notification", func(t *testing.T) {
+		valid, errs := v.ValidateURLEncodedStringWithVersion(
+			schema, encoding,
+			"type=email&to=user%40example.com&subject=Hello",
+			3.0,
+		)
+		assert.True(t, valid, "valid email body should pass")
+		assert.Empty(t, errs)
+	})
+
+	t.Run("invalid discriminator value", func(t *testing.T) {
+		valid, errs := v.ValidateURLEncodedStringWithVersion(
+			schema, encoding,
+			"type=push&token=abc123&title=Alert",
+			3.0,
+		)
+		assert.False(t, valid, "unknown discriminator value should fail")
+		assert.NotEmpty(t, errs, "should have validation errors for unknown type")
+	})
+
+	t.Run("wrong variant fields for discriminator", func(t *testing.T) {
+		// type=sms but sending email fields (to, subject) instead of SMS fields (phone, message)
+		valid, errs := v.ValidateURLEncodedStringWithVersion(
+			schema, encoding,
+			"type=sms&to=user%40example.com&subject=Hello",
+			3.0,
+		)
+		assert.False(t, valid, "SMS type with email fields should fail (missing phone, message)")
+		assert.NotEmpty(t, errs, "should have validation errors for wrong variant fields")
+	})
+
+	t.Run("missing discriminator property", func(t *testing.T) {
+		// No type field at all
+		valid, errs := v.ValidateURLEncodedStringWithVersion(
+			schema, encoding,
+			"phone=%2B1234567890&message=hello",
+			3.0,
+		)
+		assert.False(t, valid, "missing discriminator property should fail")
+		assert.NotEmpty(t, errs, "should have validation errors for missing discriminator")
+	})
+}
