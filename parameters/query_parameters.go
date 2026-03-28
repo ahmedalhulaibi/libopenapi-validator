@@ -61,6 +61,11 @@ func (v *paramValidator) ValidateQueryParamsWithPathItem(request *http.Request, 
 		}
 	}
 
+	// Build raw (undecoded) query values for allowReserved checks.
+	// request.URL.Query() decodes percent-encoding, but allowReserved
+	// must check the raw values — properly encoded reserved chars are valid.
+	rawQueryValues := parseRawQueryValues(request.URL.RawQuery)
+
 	for qKey, qVal := range request.URL.Query() {
 		// check if the query key exactly matches a spec parameter name (e.g., "match[]")
 		// if so, store it literally without deepObject stripping
@@ -132,18 +137,18 @@ doneLooking:
 					pType := sch.Type
 
 					// for each param, check each type
-					for _, ef := range fp.Values {
-
-						// check allowReserved values. If this is set to true, then we can allow the
-						// following characters
-						//  :/?#[]@!$&'()*+,;=
-						// to be present as they are, without being URLEncoded.
-						if !params[p].AllowReserved {
-							if rxRxp.MatchString(ef) && params[p].IsExploded() {
+					// Check allowReserved against raw (undecoded) query values.
+					// Reserved chars that are properly percent-encoded should not trigger rejection.
+					if !params[p].AllowReserved && params[p].IsExploded() {
+						for _, rawVal := range rawQueryValues[params[p].Name] {
+							if rxRxp.MatchString(rawVal) {
 								validationErrors = append(validationErrors,
-									errors.IncorrectReservedValues(params[p], ef, sch, pathValue, operation, renderedSchema))
+									errors.IncorrectReservedValues(params[p], rawVal, sch, pathValue, operation, renderedSchema))
 							}
 						}
+					}
+
+					for _, ef := range fp.Values {
 						for _, ty := range pType {
 							switch ty {
 
@@ -310,6 +315,36 @@ doneLooking:
 		return false, validationErrors
 	}
 	return true, nil
+}
+
+// parseRawQueryValues extracts query parameter values from the raw (undecoded) query string.
+// Unlike request.URL.Query(), this preserves percent-encoding so we can check for
+// unencoded reserved characters accurately.
+func parseRawQueryValues(rawQuery string) map[string][]string {
+	result := make(map[string][]string)
+
+	for rawQuery != "" {
+		var part string
+		if idx := strings.IndexByte(rawQuery, '&'); idx >= 0 {
+			part = rawQuery[:idx]
+			rawQuery = rawQuery[idx+1:]
+		} else {
+			part = rawQuery
+			rawQuery = ""
+		}
+
+		key := part
+		val := ""
+
+		if idx := strings.IndexByte(part, '='); idx >= 0 {
+			key = part[:idx]
+			val = part[idx+1:]
+		}
+
+		result[key] = append(result[key], val)
+	}
+
+	return result
 }
 
 func (v *paramValidator) validateSimpleParam(sch *base.Schema, rawParam string, parsedParam any, parameter *v3.Parameter, pathTemplate string, operation string, renderedSchema string) (validationErrors []*errors.ValidationError) {
