@@ -610,3 +610,110 @@ components:
 		assert.NotEmpty(t, errs, "should have validation errors for missing discriminator")
 	})
 }
+
+func TestURLEncoded_OneOfDiscriminator_NonStringTypes(t *testing.T) {
+	spec := `openapi: 3.0.3
+info:
+  title: Test API
+  version: "1.0"
+paths:
+  /things:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/VariantA'
+                - $ref: '#/components/schemas/VariantB'
+              discriminator:
+                propertyName: kind
+                mapping:
+                  type_0: '#/components/schemas/VariantA'
+                  type_1: '#/components/schemas/VariantB'
+      responses:
+        '200':
+          description: OK
+components:
+  schemas:
+    VariantA:
+      type: object
+      required: [kind, f0, f1]
+      properties:
+        kind:
+          type: string
+          enum: [type_0]
+        f0:
+          type: number
+        f1:
+          type: string
+    VariantB:
+      type: object
+      required: [kind, f0, f1]
+      properties:
+        kind:
+          type: string
+          enum: [type_1]
+        f0:
+          type: boolean
+        f1:
+          type: integer`
+
+	doc, err := libopenapi.NewDocument([]byte(spec))
+	assert.NoError(t, err)
+
+	v3Doc, err := doc.BuildV3Model()
+	assert.NoError(t, err)
+
+	contentSchema := v3Doc.Model.Paths.PathItems.GetOrZero("/things").Post.RequestBody.Content.GetOrZero("application/x-www-form-urlencoded")
+	schema := contentSchema.Schema.Schema()
+	encoding := contentSchema.Encoding
+
+	v := NewURLEncodedValidator()
+
+	t.Run("VariantA with number field", func(t *testing.T) {
+		// kind=type_0 selects VariantA where f0 is number and f1 is string.
+		// Form values are all strings, so f0="-2.61" must be coerced to float64.
+		valid, errs := v.ValidateURLEncodedStringWithVersion(
+			schema, encoding,
+			"kind=type_0&f0=-2.61&f1=hello",
+			3.0,
+		)
+		assert.True(t, valid, "VariantA body should pass: f0 should be coerced from string to number")
+		assert.Empty(t, errs)
+	})
+
+	t.Run("VariantB with boolean and integer fields", func(t *testing.T) {
+		// kind=type_1 selects VariantB where f0 is boolean and f1 is integer.
+		valid, errs := v.ValidateURLEncodedStringWithVersion(
+			schema, encoding,
+			"kind=type_1&f0=true&f1=42",
+			3.0,
+		)
+		assert.True(t, valid, "VariantB body should pass: f0 coerced to bool, f1 coerced to int")
+		assert.Empty(t, errs)
+	})
+
+	t.Run("VariantA invalid f0", func(t *testing.T) {
+		// kind=type_0 but f0 is not a valid number
+		valid, errs := v.ValidateURLEncodedStringWithVersion(
+			schema, encoding,
+			"kind=type_0&f0=notanumber&f1=hello",
+			3.0,
+		)
+		assert.False(t, valid, "f0=notanumber should fail number validation for VariantA")
+		assert.NotEmpty(t, errs)
+	})
+
+	t.Run("VariantB invalid f1", func(t *testing.T) {
+		// kind=type_1 but f1 is not a valid integer
+		valid, errs := v.ValidateURLEncodedStringWithVersion(
+			schema, encoding,
+			"kind=type_1&f0=false&f1=notanint",
+			3.0,
+		)
+		assert.False(t, valid, "f1=notanint should fail integer validation for VariantB")
+		assert.NotEmpty(t, errs)
+	})
+}
