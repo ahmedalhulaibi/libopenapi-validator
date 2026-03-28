@@ -80,13 +80,16 @@ func NewValidator(document libopenapi.Document, opts ...config.Option) (Validato
 	if errs != nil {
 		return nil, []error{errs}
 	}
-	v := NewValidatorFromV3Model(&m.Model, opts...)
+	v, _ := NewValidatorFromV3Model(&m.Model, opts...)
 	v.(*validator).document = document
 	return v, nil
 }
 
-// NewValidatorFromV3Model will create a new Validator from an OpenAPI Model
-func NewValidatorFromV3Model(m *v3.Document, opts ...config.Option) Validator {
+// NewValidatorFromV3Model will create a new Validator from an OpenAPI Model.
+// The returned []*errors.ValidationError slice contains spec-level warnings
+// (e.g. ambiguous parameter style combinations). These are non-blocking: the
+// Validator is always usable regardless of warnings.
+func NewValidatorFromV3Model(m *v3.Document, opts ...config.Option) (Validator, []*errors.ValidationError) {
 	options := config.NewValidationOptions(opts...)
 
 	// Build radix tree for O(k) path lookup (where k = path depth)
@@ -110,7 +113,92 @@ func NewValidatorFromV3Model(m *v3.Document, opts ...config.Option) Validator {
 	// create a response body validator
 	v.responseValidator = responses.NewResponseBodyValidator(m, config.WithExistingOpts(options))
 
-	return v
+	// check for ambiguous parameter style combinations and collect warnings
+	warnings := checkParameterStyleAmbiguities(m)
+
+	return v, warnings
+}
+
+// checkParameterStyleAmbiguities inspects all parameters in the document for
+// style/explode/type combinations that produce ambiguous serialisations.
+//
+// Currently detected:
+//   - style=label, explode=true, schema type=array, items type=number —
+//     the '.' label delimiter is indistinguishable from decimal points in floats.
+func checkParameterStyleAmbiguities(doc *v3.Document) []*errors.ValidationError {
+	if doc == nil || doc.Paths == nil || doc.Paths.PathItems == nil {
+		return nil
+	}
+
+	var warnings []*errors.ValidationError
+
+	checkParam := func(param *v3.Parameter) {
+		if param == nil || param.Schema == nil {
+			return
+		}
+		// Must be style=label and explode=true
+		if param.Style != helpers.LabelStyle || !param.IsExploded() {
+			return
+		}
+		schema := param.Schema.Schema()
+		if schema == nil || len(schema.Type) == 0 || schema.Type[0] != helpers.Array {
+			return
+		}
+		// Check items type is number
+		if schema.Items == nil || schema.Items.A == nil {
+			return
+		}
+		itemsSchema := schema.Items.A.Schema()
+		if itemsSchema == nil || len(itemsSchema.Type) == 0 || itemsSchema.Type[0] != helpers.Number {
+			return
+		}
+
+		// Extract spec line/column from the low-level parameter node
+		line, col := 1, 0
+		if low := param.GoLow(); low != nil && low.RootNode != nil {
+			line, col = low.RootNode.Line, low.RootNode.Column
+		}
+
+		warnings = append(warnings, &errors.ValidationError{
+			ValidationType:    helpers.ParameterValidation,
+			ValidationSubType: helpers.ParameterValidationPath,
+			Message: fmt.Sprintf(
+				"Parameter '%s' uses an ambiguous style combination",
+				param.Name,
+			),
+			Reason: "style=label with explode=true on an array of number items is ambiguous: " +
+				"the '.' label delimiter cannot be distinguished from decimal points in float values",
+			SpecLine: line,
+			SpecCol:  col,
+			HowToFix: "Use style=simple for numeric arrays, or change items type to integer " +
+				"if decimal values are not needed",
+		})
+	}
+
+	for pathPair := doc.Paths.PathItems.First(); pathPair != nil; pathPair = pathPair.Next() {
+		pathItem := pathPair.Value()
+
+		// Check operation-level parameters
+		operations := pathItem.GetOperations()
+		if operations != nil {
+			for opPair := operations.First(); opPair != nil; opPair = opPair.Next() {
+				op := opPair.Value()
+				if op == nil {
+					continue
+				}
+				for _, param := range op.Parameters {
+					checkParam(param)
+				}
+			}
+		}
+
+		// Check path-level parameters
+		for _, param := range pathItem.Parameters {
+			checkParam(param)
+		}
+	}
+
+	return warnings
 }
 
 func (v *validator) SetDocument(document libopenapi.Document) {

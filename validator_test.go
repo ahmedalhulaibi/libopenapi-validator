@@ -2118,7 +2118,7 @@ components:
 		panic(fmt.Sprintf("failed to create v3 model from document: %e", errs))
 	}
 
-	v := NewValidatorFromV3Model(&model.Model)
+	v, _ := NewValidatorFromV3Model(&model.Model)
 
 	valid, vErrs := v.ValidateDocument()
 	assert.False(t, valid)
@@ -2207,7 +2207,7 @@ paths:
 	}
 
 	// This should not panic even with nil operations
-	v := NewValidatorFromV3Model(&m.Model)
+	v, _ := NewValidatorFromV3Model(&m.Model)
 	assert.NotNil(t, v)
 }
 
@@ -2250,7 +2250,7 @@ paths:
 	}
 
 	// This should not panic even with nil schemas
-	v := NewValidatorFromV3Model(&m.Model)
+	v, _ := NewValidatorFromV3Model(&m.Model)
 	assert.NotNil(t, v)
 }
 
