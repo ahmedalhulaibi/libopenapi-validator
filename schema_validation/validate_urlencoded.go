@@ -26,6 +26,11 @@ func TransformURLEncodedToSchemaJSON(bodyString string, schema *base.Schema, enc
 		return nil, []*errors.ValidationError{errors.InvalidURLEncodedParsing("empty form-urlencoded context", bodyString)}
 	}
 
+	// Parse raw (undecoded) form values for allowReserved checks.
+	// url.ParseQuery decodes percent-encoding, but allowReserved must check
+	// the raw values — properly encoded reserved chars are valid.
+	rawFormValues := parseRawFormValues(bodyString)
+
 	jsonMap := unflattenValues(rawValues)
 
 	var validationErrors []*errors.ValidationError
@@ -61,7 +66,22 @@ func TransformURLEncodedToSchemaJSON(bodyString string, schema *base.Schema, enc
 						val = newVal
 					}
 
-					validateEncodingRecursive(propName, val, allowReserved, &validationErrors, propSchema)
+					// Check allowReserved against raw (undecoded) form values.
+				// Properly percent-encoded reserved chars should not trigger rejection.
+				// Skip for fields with:
+				//   - explicit content type encoding (e.g., application/json) where reserved chars
+				//     are inherent to the content format
+				//   - explicit style/explode settings where structural chars (commas, pipes, etc.)
+				//     are used as delimiters
+				hasContentEncoding := contentEncoding != nil && contentEncoding.ContentType != ""
+				hasStyleEncoding := contentEncoding != nil && (contentEncoding.Style != "" || contentEncoding.Explode != nil)
+				if !allowReserved && !hasContentEncoding && !hasStyleEncoding {
+					for _, rawVal := range rawFormValues[propName] {
+						if rxReserved.MatchString(rawVal) {
+							validationErrors = append(validationErrors, errors.ReservedURLEncodedValue(propSchema, propName, rawVal))
+						}
+					}
+				}
 				}
 			}
 		}
@@ -206,6 +226,36 @@ func validateEncodingRecursive(path string, val any, allowReserved bool, errs *[
 			}
 		}
 	}
+}
+
+// parseRawFormValues extracts form field values from the raw (undecoded) body string.
+// Unlike url.ParseQuery, this preserves percent-encoding so we can check for
+// unencoded reserved characters accurately.
+func parseRawFormValues(body string) map[string][]string {
+	result := make(map[string][]string)
+
+	for body != "" {
+		var part string
+		if idx := strings.IndexByte(body, '&'); idx >= 0 {
+			part = body[:idx]
+			body = body[idx+1:]
+		} else {
+			part = body
+			body = ""
+		}
+
+		key := part
+		val := ""
+
+		if idx := strings.IndexByte(part, '='); idx >= 0 {
+			key = part[:idx]
+			val = part[idx+1:]
+		}
+
+		result[key] = append(result[key], val)
+	}
+
+	return result
 }
 
 func coerceValue(data any, schema *base.Schema) any {
