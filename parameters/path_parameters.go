@@ -120,6 +120,17 @@ func (v *paramValidator) ValidatePathParamsWithPathItem(request *http.Request, p
 						paramName = paramName[1:]
 					}
 
+					// Also detect style from the parameter's style field when the
+					// template uses plain {name} notation (no prefix annotation).
+					if isSimple && p.Style == helpers.LabelStyle {
+						isLabel = true
+						isSimple = false
+					}
+					if isSimple && p.Style == helpers.MatrixStyle {
+						isMatrix = true
+						isSimple = false
+					}
+
 					// does this param name match the current path segment param name
 					if paramName != p.Name {
 						continue
@@ -171,17 +182,25 @@ func (v *paramValidator) ValidatePathParamsWithPathItem(request *http.Request, p
 							switch sch.Type[typ] {
 							case helpers.String:
 
-								// TODO: label and matrix style validation
+								// Strip style-specific prefixes before validation
+								strValue := decodedParamValue
+								if isLabel && p.Style == helpers.LabelStyle {
+									strValue = decodedParamValue[1:] // strip leading '.'
+								}
+								if isMatrix && p.Style == helpers.MatrixStyle {
+									// strip ';name=' prefix: ";color=blue" → "blue"
+									strValue = strings.Replace(decodedParamValue[1:], fmt.Sprintf("%s=", p.Name), "", 1)
+								}
 
 								// check if the param is within the enum
 								if sch.Enum != nil {
-									enumCheck(decodedParamValue)
+									enumCheck(strValue)
 									break
 								}
 								validationErrors = append(validationErrors,
 									ValidateSingleParameterSchema(
 										sch,
-										decodedParamValue,
+										strValue,
 										"Path parameter",
 										"The path parameter",
 										p.Name,
