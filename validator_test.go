@@ -2488,6 +2488,109 @@ paths:
 	assert.Len(t, valErrsNoBody, 0)
 }
 
+func TestNewValidatorFromV3Model_WarnsAmbiguousLabelExplodeNumberArray(t *testing.T) {
+	spec := `openapi: 3.1.0
+paths:
+  /items/{ids}:
+    get:
+      parameters:
+        - name: ids
+          in: path
+          required: true
+          style: label
+          explode: true
+          schema:
+            type: array
+            items:
+              type: number
+      responses:
+        '200':
+          description: OK`
+
+	doc, err := libopenapi.NewDocument([]byte(spec))
+	require.NoError(t, err)
+
+	m, buildErr := doc.BuildV3Model()
+	require.Nil(t, buildErr)
+
+	v, warnings := NewValidatorFromV3Model(&m.Model)
+
+	// Validator must still be created successfully (warning, not blocking error)
+	assert.NotNil(t, v)
+
+	// Must emit exactly one warning about the ambiguous style combination
+	require.Len(t, warnings, 1)
+	w := warnings[0]
+	assert.Equal(t, helpers.ParameterValidation, w.ValidationType)
+	assert.Contains(t, w.Message, "ids")
+	assert.Contains(t, w.Reason, "label")
+	assert.Contains(t, w.Reason, "decimal")
+	assert.Greater(t, w.SpecLine, 0, "SpecLine should reference the parameter's position in the spec")
+}
+
+func TestNewValidatorFromV3Model_NoWarningForNonAmbiguousParams(t *testing.T) {
+	spec := `openapi: 3.1.0
+paths:
+  /items/{ids}:
+    get:
+      parameters:
+        - name: ids
+          in: path
+          required: true
+          style: simple
+          explode: true
+          schema:
+            type: array
+            items:
+              type: number
+      responses:
+        '200':
+          description: OK`
+
+	doc, err := libopenapi.NewDocument([]byte(spec))
+	require.NoError(t, err)
+
+	m, buildErr := doc.BuildV3Model()
+	require.Nil(t, buildErr)
+
+	v, warnings := NewValidatorFromV3Model(&m.Model)
+
+	assert.NotNil(t, v)
+	assert.Empty(t, warnings, "No warnings expected for non-ambiguous parameter styles")
+}
+
+func TestNewValidatorFromV3Model_NoWarningLabelExplodeIntegerArray(t *testing.T) {
+	// label + explode + array of integer is NOT ambiguous (no decimal points)
+	spec := `openapi: 3.1.0
+paths:
+  /items/{ids}:
+    get:
+      parameters:
+        - name: ids
+          in: path
+          required: true
+          style: label
+          explode: true
+          schema:
+            type: array
+            items:
+              type: integer
+      responses:
+        '200':
+          description: OK`
+
+	doc, err := libopenapi.NewDocument([]byte(spec))
+	require.NoError(t, err)
+
+	m, buildErr := doc.BuildV3Model()
+	require.Nil(t, buildErr)
+
+	v, warnings := NewValidatorFromV3Model(&m.Model)
+
+	assert.NotNil(t, v)
+	assert.Empty(t, warnings, "No warnings expected for label+explode+array of integer")
+}
+
 func TestHEAD_ImplicitViaGET_ResponseValidation(t *testing.T) {
 	// This spec defines only GET for /resource. Ensure a HEAD request that returns the same body
 	// as GET will still validate against the documented GET response.
