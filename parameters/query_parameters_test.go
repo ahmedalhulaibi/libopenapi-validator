@@ -3584,6 +3584,50 @@ paths:
 	assert.Equal(t, errors[0].Reason, "The query parameter (which is an array) 'id' has a minimum items length of 10, however the request provided 3 items")
 }
 
+func TestNewValidator_CheckExplodedArrayMinItems(t *testing.T) {
+	spec := `openapi: 3.1.0
+info:
+  title: Exploded Array API
+  version: "1.0.0"
+paths:
+  /items:
+    get:
+      parameters:
+        - name: id
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: integer
+            minItems: 3
+      responses:
+        '200':
+          description: OK`
+
+	doc, _ := libopenapi.NewDocument([]byte(spec))
+	m, err := doc.BuildV3Model()
+	assert.NoError(t, err)
+	v := NewParameterValidator(&m.Model)
+
+	t.Run("valid_enough_items", func(t *testing.T) {
+		// 3 exploded items: id=1&id=2&id=3 — should pass minItems: 3
+		req, _ := http.NewRequest(http.MethodGet, "/items?id=1&id=2&id=3", nil)
+		valid, errors := v.ValidateQueryParams(req)
+		assert.True(t, valid, "expected valid, got errors: %v", errors)
+	})
+
+	t.Run("invalid_too_few_items", func(t *testing.T) {
+		// 2 exploded items: id=1&id=2 — should fail minItems: 3
+		req, _ := http.NewRequest(http.MethodGet, "/items?id=1&id=2", nil)
+		valid, errors := v.ValidateQueryParams(req)
+		assert.False(t, valid, "expected invalid for 2 items with minItems: 3")
+		assert.NotEmpty(t, errors)
+	})
+}
+
 func TestNewValidator_CheckQueryParamsUniqueItems(t *testing.T) {
 	spec := `openapi: 3.1.0
 info:
