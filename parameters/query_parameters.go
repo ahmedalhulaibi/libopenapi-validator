@@ -222,6 +222,15 @@ doneLooking:
 								// to ensure this array items matches the type
 								// only check if items is a schema, not a boolean
 								if sch.Items != nil && sch.Items.IsA() {
+									if params[p].IsExploded() {
+										// For exploded arrays (e.g., id=1&id=2&id=3), all repeated
+										// values form the array. Join them so ValidateQueryArray
+										// sees the full item count for minItems/maxItems checks.
+										joined := strings.Join(fp.Values, ",")
+										validationErrors = append(validationErrors,
+											ValidateQueryArray(sch, params[p], joined, contentWrapped, v.options, pathValue, operation, renderedSchema)...)
+										break skipValues
+									}
 									validationErrors = append(validationErrors,
 										ValidateQueryArray(sch, params[p], ef, contentWrapped, v.options, pathValue, operation, renderedSchema)...)
 								}
