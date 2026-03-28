@@ -3628,6 +3628,47 @@ paths:
 	})
 }
 
+func TestNewValidator_ReservedCharsInEncodedNumberValues(t *testing.T) {
+	spec := `openapi: 3.1.0
+info:
+  title: Number API
+  version: "1.0.0"
+paths:
+  /calc:
+    get:
+      parameters:
+        - name: val
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: number
+      responses:
+        '200':
+          description: OK`
+
+	doc, _ := libopenapi.NewDocument([]byte(spec))
+	m, err := doc.BuildV3Model()
+	assert.NoError(t, err)
+	v := NewParameterValidator(&m.Model)
+
+	t.Run("percent_encoded_plus_in_scientific_notation", func(t *testing.T) {
+		// 1.5e+235 → percent-encoded as val=1.5e%2B235
+		// The '+' is properly encoded as %2B, so allowReserved check should pass.
+		req, _ := http.NewRequest(http.MethodGet, "/calc?val=1.5e%2B235", nil)
+		valid, errors := v.ValidateQueryParams(req)
+		assert.True(t, valid, "percent-encoded '+' should not trigger reserved char rejection: %v", errors)
+	})
+
+	t.Run("unencoded_plus_rejected", func(t *testing.T) {
+		// Literal unencoded '+' in the raw query should be rejected
+		req, _ := http.NewRequest(http.MethodGet, "/calc?val=1.5e+235", nil)
+		valid, _ := v.ValidateQueryParams(req)
+		assert.False(t, valid, "unencoded '+' should be rejected when allowReserved is false")
+	})
+}
+
 func TestNewValidator_CheckQueryParamsUniqueItems(t *testing.T) {
 	spec := `openapi: 3.1.0
 info:
