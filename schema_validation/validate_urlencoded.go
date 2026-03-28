@@ -263,6 +263,17 @@ func coerceValue(data any, schema *base.Schema) any {
 		return data
 	}
 
+	// When the schema uses a discriminated oneOf/anyOf and the data is a map,
+	// resolve the discriminator to find the matching variant schema and use it
+	// for coercion. Without this, form-urlencoded string values can't be coerced
+	// to the correct types (number, boolean, integer) because the parent schema
+	// doesn't know which variant's property types to use.
+	if m, ok := data.(map[string]any); ok {
+		if variantSchema := resolveDiscriminatorSchema(m, schema); variantSchema != nil {
+			return coerceValue(data, variantSchema)
+		}
+	}
+
 	targetTypes := []string{}
 	if len(schema.Type) > 0 {
 		targetTypes = append(targetTypes, schema.Type...)
@@ -291,6 +302,68 @@ func coerceValue(data any, schema *base.Schema) any {
 		}
 	}
 	return data
+}
+
+// resolveDiscriminatorSchema checks if the schema has a discriminated oneOf or anyOf,
+// reads the discriminator property from the data, and returns the matching variant schema.
+// Returns nil if there is no discriminator, no match, or the schema is not polymorphic.
+func resolveDiscriminatorSchema(data map[string]any, schema *base.Schema) *base.Schema {
+	if schema.Discriminator == nil {
+		return nil
+	}
+
+	propName := schema.Discriminator.PropertyName
+	if propName == "" {
+		return nil
+	}
+
+	discValue, exists := data[propName]
+	if !exists {
+		return nil
+	}
+
+	valueStr, ok := discValue.(string)
+	if !ok {
+		return nil
+	}
+
+	// Collect the candidate variants from oneOf or anyOf.
+	var variants []*base.SchemaProxy
+	if len(schema.OneOf) > 0 {
+		variants = schema.OneOf
+	} else if len(schema.AnyOf) > 0 {
+		variants = schema.AnyOf
+	}
+	if len(variants) == 0 {
+		return nil
+	}
+
+	// Try explicit mapping first.
+	if schema.Discriminator.Mapping != nil {
+		for pair := schema.Discriminator.Mapping.First(); pair != nil; pair = pair.Next() {
+			if pair.Key() == valueStr {
+				mappedRef := pair.Value()
+				for _, proxy := range variants {
+					if proxy.IsReference() && proxy.GetReference() == mappedRef {
+						return proxy.Schema()
+					}
+				}
+			}
+		}
+	}
+
+	// Fall back to matching the discriminator value against the schema name in the $ref.
+	for _, proxy := range variants {
+		if proxy.IsReference() {
+			ref := proxy.GetReference()
+			parts := strings.Split(ref, "/")
+			if len(parts) > 0 && parts[len(parts)-1] == valueStr {
+				return proxy.Schema()
+			}
+		}
+	}
+
+	return nil
 }
 
 func tryConvert(data any, targetType string, schema *base.Schema) (any, bool) {
