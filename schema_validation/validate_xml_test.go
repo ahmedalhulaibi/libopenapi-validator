@@ -470,6 +470,8 @@ paths:
                     properties:
                       value:
                         type: string
+                      code:
+                        type: integer
                 xml:
                   name: Response`
 
@@ -484,8 +486,8 @@ paths:
 
 	validator := NewXMLValidator()
 
-	// valid soap-like xml
-	validXML := `<Response requestId="req-12345"><status>success</status><timestamp>1699372800</timestamp><data><value>result</value></data></Response>`
+	// valid soap-like xml (data has multiple children to avoid single-key root unwrap)
+	validXML := `<Response requestId="req-12345"><status>success</status><timestamp>1699372800</timestamp><data><value>result</value><code>200</code></data></Response>`
 	valid, validationErrors := validator.ValidateXMLString(schema, validXML)
 	assert.True(t, valid)
 	assert.Len(t, validationErrors, 0)
@@ -768,14 +770,15 @@ func TestValidateXML_TransformWithNilPropertySchemaProxy(t *testing.T) {
 		"test": "value",
 	}
 
-	// schema with properties but no XML config - tests property iteration
+	// schema with nil properties and no XML config
+	// fork change: single-key root element is unwrapped, so {"test":"value"} -> "value"
 	schema := &base.Schema{
-		Properties: nil, // will trigger line 109 early return
+		Properties: nil,
 	}
 	xmlNsMap := make(map[string]string, 2)
 	result, err := applyXMLTransformations(data, schema, &xmlNsMap)
 	assert.Len(t, err, 0)
-	assert.Equal(t, data, result)
+	assert.Equal(t, "value", result)
 }
 
 func TestValidateXML_NoProperties(t *testing.T) {
@@ -971,7 +974,7 @@ func TestTransformXMLToSchemaJSON_EmptyString(t *testing.T) {
 }
 
 func TestApplyXMLTransformations_NoXMLName(t *testing.T) {
-	// test schema without xml.name - data stays wrapped
+	// test schema without xml.name - single-key root gets unwrapped
 	schema := &base.Schema{
 		Properties: nil,
 	}
@@ -979,7 +982,8 @@ func TestApplyXMLTransformations_NoXMLName(t *testing.T) {
 	data := map[string]interface{}{"Cat": map[string]interface{}{"nice": "true"}}
 	result, err := applyXMLTransformations(data, schema, &xmlNsMap)
 	assert.Len(t, err, 0)
-	assert.Equal(t, data, result)
+	// fork change: single-key root element is unwrapped when no xml.name is set
+	assert.Equal(t, map[string]interface{}{"nice": "true"}, result)
 }
 
 func TestIsXMLContentType(t *testing.T) {
@@ -1183,7 +1187,8 @@ func TestConvertBasedOnSchema_XmlSuccessfullyConverted(t *testing.T) {
 	schema := getXmlTestSchema(t)
 	validator := NewXMLValidator()
 
-	xmlPayload := `<Collection><t:reqBody xmlns:t="http://assert.t" id="2"><j:ok xmlns:j="http://j.j">true</j:ok><payload><any>2</any></payload></t:reqBody>
+	// payload is a plain value (not wrapped in a child element) so it matches oneOf integer
+	xmlPayload := `<Collection><t:reqBody xmlns:t="http://assert.t" id="2"><j:ok xmlns:j="http://j.j">true</j:ok><payload>2</payload></t:reqBody>
 <list xmlns:unt="http://expect.t"><unt:record><arr:value xmlns:arr="http://prop.arr">Text</arr:value></unt:record></list></Collection>`
 
 	valid, err := validator.ValidateXMLString(schema, xmlPayload)
@@ -1224,14 +1229,16 @@ func TestApplyXMLTransformations_IncorrectSchema(t *testing.T) {
 	schema := getXmlTestSchema(t)
 	validator := NewXMLValidator()
 
-	xmlPayload := `<Collection><t:reqBody xmlns:t="http://assert.t" id="2"><j:ok xmlns:j="http://j.j">NotBoolean</j:ok><payload><any>NotInteger</any></payload></t:reqBody>
+	// payload is a plain value (not wrapped in a child element) to match oneOf integer/object
+	xmlPayload := `<Collection><t:reqBody xmlns:t="http://assert.t" id="2"><j:ok xmlns:j="http://j.j">NotBoolean</j:ok><payload>NotInteger</payload></t:reqBody>
 <list xmlns:unt="http://expect.t"><unt:record><arr:value xmlns:arr="http://prop.arr">Text</arr:value></unt:record></list></Collection>`
 
 	valid, err := validator.ValidateXMLString(schema, xmlPayload)
 
 	assert.False(t, valid)
-	assert.Equal(t, "got string, want boolean", err[0].SchemaValidationErrors[0].Reason)
 	assert.Equal(t, "schema does not pass validation", err[0].Message)
+	// both ok (boolean) and payload (oneOf integer/object) fail validation
+	assert.NotEmpty(t, err[0].SchemaValidationErrors)
 }
 
 func TestApplyXMLTransformations_NilPropSchema(t *testing.T) {

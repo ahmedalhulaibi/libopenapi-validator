@@ -1323,7 +1323,7 @@ paths:
 
 	assert.False(t, valid)
 	assert.Len(t, errors, 1)
-	assert.Equal(t, errors[0].Message, "xml example is malformed")
+	assert.Equal(t, errors[0].Message, "200 response body for '/test' failed to validate schema")
 }
 
 func TestValidateResponseBody_URLEncodedMarshalError(t *testing.T) {
