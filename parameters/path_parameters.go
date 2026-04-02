@@ -45,7 +45,15 @@ func (v *paramValidator) ValidatePathParamsWithPathItem(request *http.Request, p
 	}
 	// split the path into segments
 	submittedSegments := strings.Split(paths.StripRequestPath(request, v.document), helpers.Slash)
-	pathSegments := strings.Split(pathValue, helpers.Slash)
+
+	// Strip URL fragment (e.g., "/finding/{id}#analyzerArn" → "/finding/{id}").
+	// Fragments are never sent over HTTP — they're OAS annotations only.
+	cleanPath := pathValue
+	if idx := strings.IndexByte(cleanPath, '#'); idx >= 0 {
+		cleanPath = cleanPath[:idx]
+	}
+
+	pathSegments := strings.Split(cleanPath, helpers.Slash)
 
 	// get the operation method for error reporting
 	operation := strings.ToLower(request.Method)
