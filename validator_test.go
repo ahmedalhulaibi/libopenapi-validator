@@ -2886,3 +2886,41 @@ components:
 		assert.Empty(t, reqErrors, "no validation errors expected (uncached request)")
 	})
 }
+
+// TestPathWithFragmentAnnotation verifies that OAS path keys with fragment
+// annotations (e.g., "/finding/{id}#analyzerArn") don't crash the validator.
+// AWS and other providers use this convention to disambiguate operations.
+func TestPathWithFragmentAnnotation(t *testing.T) {
+	spec := `openapi: 3.1.0
+paths:
+  /finding/{id}#analyzerArn:
+    get:
+      operationId: getFinding
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: analyzerArn
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK`
+
+	doc, _ := libopenapi.NewDocument([]byte(spec))
+	v, _ := NewValidator(doc)
+
+	request, _ := http.NewRequest(http.MethodGet,
+		"https://example.com/finding/abc123?analyzerArn=arn:aws:access-analyzer:us-east-1:123456789012:analyzer/my-analyzer",
+		nil)
+
+	// Should not panic.
+	valid, errors := v.ValidateHttpRequestSync(request)
+
+	assert.True(t, valid, "request should be valid")
+	assert.Empty(t, errors)
+}
