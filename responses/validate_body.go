@@ -78,8 +78,24 @@ func (v *responseBodyValidator) ValidateResponseBodyWithPathItem(request *http.R
 
 	if foundResponse != nil {
 		if foundResponse.Content != nil { // only validate if we have content types.
-			// check content type has been defined in the contract
-			if mediaType, ok := foundResponse.Content.Get(mediaTypeSting); ok {
+			// check content type has been defined in the contract — also match
+			// when the declared key carries parameters (e.g. declared as
+			// `application/json;charset=UTF-8`, received base form already stripped
+			// by ExtractContentType). Strip declared-side parameters the same way.
+			mediaType, ok := foundResponse.Content.Get(mediaTypeSting)
+			if !ok {
+				for declaredCT, declared := range foundResponse.Content.FromOldest() {
+					declaredBase, _, _ := helpers.ExtractContentType(declaredCT)
+					if declaredBase == mediaTypeSting {
+						mediaType = declared
+						ok = true
+
+						break
+					}
+				}
+			}
+
+			if ok {
 				validationErrors = append(validationErrors,
 					v.checkResponseSchema(request, response, mediaTypeSting, mediaType)...)
 			} else {
@@ -94,8 +110,22 @@ func (v *responseBodyValidator) ValidateResponseBodyWithPathItem(request *http.R
 	} else {
 		// no code match, check for default response
 		if operation.Responses.Default != nil && operation.Responses.Default.Content != nil {
-			// check content type has been defined in the contract
-			if mediaType, ok := operation.Responses.Default.Content.Get(mediaTypeSting); ok {
+			// check content type has been defined in the contract — with
+			// declared-side parameter stripping (see above).
+			mediaType, ok := operation.Responses.Default.Content.Get(mediaTypeSting)
+			if !ok {
+				for declaredCT, declared := range operation.Responses.Default.Content.FromOldest() {
+					declaredBase, _, _ := helpers.ExtractContentType(declaredCT)
+					if declaredBase == mediaTypeSting {
+						mediaType = declared
+						ok = true
+
+						break
+					}
+				}
+			}
+
+			if ok {
 				foundResponse = operation.Responses.Default
 				validationErrors = append(validationErrors,
 					v.checkResponseSchema(request, response, contentType, mediaType)...)
