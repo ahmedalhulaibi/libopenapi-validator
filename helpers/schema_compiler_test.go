@@ -896,3 +896,72 @@ func TestTransformNullableSchema_EnumWithNull(t *testing.T) {
 	}
 	assert.Equal(t, 1, nullCount, "enum should contain exactly one null value")
 }
+
+func TestTransformNullableSchema_AnyOf(t *testing.T) {
+	// OAS 3.0: nullable: true + anyOf should accept null.
+	// The transform should add {type: "null"} as an anyOf variant.
+	schema := map[string]interface{}{
+		"nullable": true,
+		"anyOf": []interface{}{
+			map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+				"login": map[string]interface{}{"type": "string"},
+			}},
+			map[string]interface{}{"type": "object", "properties": map[string]interface{}{
+				"name": map[string]interface{}{"type": "string"},
+			}},
+		},
+	}
+
+	result := transformNullableSchema(schema)
+
+	// nullable should be removed
+	_, hasNullable := result["nullable"]
+	assert.False(t, hasNullable, "nullable should be removed after transform")
+
+	// anyOf should now include a null type variant
+	anyOf, hasAnyOf := result["anyOf"]
+	require.True(t, hasAnyOf, "anyOf must be preserved")
+
+	variants, ok := anyOf.([]interface{})
+	require.True(t, ok)
+
+	// Should have original 2 + null variant = 3
+	assert.Len(t, variants, 3,
+		"anyOf should have original variants plus {type: null}")
+
+	// Last variant should be {type: "null"}
+	lastVariant, ok := variants[len(variants)-1].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "null", lastVariant["type"],
+		"last anyOf variant should be {type: null}")
+}
+
+func TestTransformNullableSchema_OneOf(t *testing.T) {
+	// OAS 3.0: nullable: true + oneOf should accept null.
+	schema := map[string]interface{}{
+		"nullable": true,
+		"oneOf": []interface{}{
+			map[string]interface{}{"type": "string"},
+			map[string]interface{}{"type": "integer"},
+		},
+	}
+
+	result := transformNullableSchema(schema)
+
+	_, hasNullable := result["nullable"]
+	assert.False(t, hasNullable, "nullable should be removed after transform")
+
+	oneOf, hasOneOf := result["oneOf"]
+	require.True(t, hasOneOf, "oneOf must be preserved")
+
+	variants, ok := oneOf.([]interface{})
+	require.True(t, ok)
+
+	assert.Len(t, variants, 3,
+		"oneOf should have original variants plus {type: null}")
+
+	lastVariant, ok := variants[len(variants)-1].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "null", lastVariant["type"],
+		"last oneOf variant should be {type: null}")
+}

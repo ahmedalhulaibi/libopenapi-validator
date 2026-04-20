@@ -240,6 +240,23 @@ func transformNullableSchema(schema map[string]interface{}) map[string]interface
 		schema["oneOf"] = oneOfSlice
 	}
 
+	// Handle nullable + anyOf: add {type: "null"} as an additional variant.
+	if anyOf, hasAnyOf := schema["anyOf"]; hasAnyOf {
+		if anyOfSlice, ok := anyOf.([]interface{}); ok {
+			anyOfSlice = append(anyOfSlice, map[string]interface{}{"type": "null"})
+			schema["anyOf"] = anyOfSlice
+		}
+	}
+
+	// Handle nullable + oneOf: add {type: "null"} as an additional variant.
+	if oneOf, hasOneOf := schema["oneOf"]; hasOneOf && !hasAllOf {
+		// Skip if we just created oneOf from allOf above (already has null).
+		if oneOfSlice, ok := oneOf.([]interface{}); ok {
+			oneOfSlice = append(oneOfSlice, map[string]interface{}{"type": "null"})
+			schema["oneOf"] = oneOfSlice
+		}
+	}
+
 	// Handle enum values - add null if nullable but not already in enum
 	enum, hasEnum := schema["enum"]
 	if hasEnum {
