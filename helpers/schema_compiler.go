@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
@@ -147,6 +148,15 @@ func transformOAS30Keywords(schema interface{}) interface{} {
 		// handle exclusiveMaximum: bool → numeric
 		transformExclusiveBound(result, "exclusiveMaximum", "maximum")
 
+		// handle enum with type-mismatched values: coerce to match the
+		// declared type. Common in OAS 3.0 specs converted from discovery
+		// documents where boolean literals end up in string enums.
+		// Matches oapi-codegen behavior (stringify booleans).
+		coerceEnumValues(result)
+
+		// handle JS-style regex literal patterns: /^pattern$/ → ^pattern$
+		stripJSPatternDelimiters(result)
+
 		return result
 
 	case []interface{}:
@@ -159,6 +169,83 @@ func transformOAS30Keywords(schema interface{}) interface{} {
 	default:
 		return schema
 	}
+}
+
+// coerceEnumValues coerces enum values to match the declared type.
+// When type is "string" and the enum contains non-string values (booleans,
+// numbers), they are converted to their string representation. This matches
+// oapi-codegen behavior and handles the common OAS 3.0 pattern where specs
+// converted from discovery documents include boolean literals in string enums.
+//
+// For OAS 3.1 sum types (type: ["string", "boolean"]), no coercion is needed
+// because the type array already permits multiple types.
+func coerceEnumValues(schema map[string]interface{}) {
+	schemaType, hasType := schema["type"]
+	enumVal, hasEnum := schema["enum"]
+
+	if !hasType || !hasEnum {
+		return
+	}
+
+
+	// Only coerce for single-type string schemas (OAS 3.0 pattern).
+	// OAS 3.1 type arrays are handled correctly by the validator.
+	typeStr, isSingleType := schemaType.(string)
+	if !isSingleType || typeStr != "string" {
+		return
+	}
+
+	enumSlice, ok := enumVal.([]interface{})
+	if !ok {
+		return
+	}
+
+	needsCoercion := false
+	for _, v := range enumSlice {
+		if _, isStr := v.(string); !isStr && v != nil {
+			needsCoercion = true
+			break
+		}
+	}
+
+	if !needsCoercion {
+		return
+	}
+
+	coerced := make([]interface{}, len(enumSlice))
+	for i, v := range enumSlice {
+		if _, isStr := v.(string); isStr || v == nil {
+			coerced[i] = v
+		} else {
+			coerced[i] = fmt.Sprint(v)
+		}
+	}
+
+	schema["enum"] = coerced
+}
+
+// stripJSPatternDelimiters removes JavaScript regex literal delimiters from
+// the pattern field. Specs generated from JS-based tools (peertube/cpy.re)
+// include patterns like "/^[a-z0-9._]+$/" where the "/" delimiters are part
+// of the JS regex literal syntax, not the pattern itself. In Go regex these
+// become literal "/" characters, making the pattern unmatchable.
+func stripJSPatternDelimiters(schema map[string]interface{}) {
+	pattern, ok := schema["pattern"]
+	if !ok {
+		return
+	}
+
+	patStr, ok := pattern.(string)
+	if !ok || len(patStr) < 3 || patStr[0] != '/' {
+		return
+	}
+
+	last := strings.LastIndex(patStr, "/")
+	if last <= 0 {
+		return
+	}
+
+	schema["pattern"] = patStr[1:last]
 }
 
 // transformExclusiveBound converts OAS 3.0 boolean exclusiveMinimum/exclusiveMaximum

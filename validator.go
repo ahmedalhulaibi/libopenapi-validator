@@ -496,6 +496,7 @@ func warmSchemaCaches(
 	}
 
 	schemaCache := options.SchemaCache
+	version := helpers.VersionToFloat(doc.Version)
 
 	// Walk through all paths and operations
 	for pathPair := doc.Paths.PathItems.First(); pathPair != nil; pathPair = pathPair.Next() {
@@ -518,7 +519,7 @@ func warmSchemaCaches(
 				for contentPair := operation.RequestBody.Content.First(); contentPair != nil; contentPair = contentPair.Next() {
 					mediaType := contentPair.Value()
 					if mediaType.Schema != nil {
-						warmMediaTypeSchema(mediaType, schemaCache, options)
+						warmMediaTypeSchema(mediaType, schemaCache, options, version)
 					}
 				}
 			}
@@ -533,7 +534,7 @@ func warmSchemaCaches(
 							for contentPair := response.Content.First(); contentPair != nil; contentPair = contentPair.Next() {
 								mediaType := contentPair.Value()
 								if mediaType.Schema != nil {
-									warmMediaTypeSchema(mediaType, schemaCache, options)
+									warmMediaTypeSchema(mediaType, schemaCache, options, version)
 								}
 							}
 						}
@@ -545,7 +546,7 @@ func warmSchemaCaches(
 					for contentPair := operation.Responses.Default.Content.First(); contentPair != nil; contentPair = contentPair.Next() {
 						mediaType := contentPair.Value()
 						if mediaType.Schema != nil {
-							warmMediaTypeSchema(mediaType, schemaCache, options)
+							warmMediaTypeSchema(mediaType, schemaCache, options, version)
 						}
 					}
 				}
@@ -555,7 +556,7 @@ func warmSchemaCaches(
 			if operation.Parameters != nil {
 				for _, param := range operation.Parameters {
 					if param != nil {
-						warmParameterSchema(param, schemaCache, options)
+						warmParameterSchema(param, schemaCache, options, version)
 					}
 				}
 			}
@@ -565,15 +566,17 @@ func warmSchemaCaches(
 		if pathItem.Parameters != nil {
 			for _, param := range pathItem.Parameters {
 				if param != nil {
-					warmParameterSchema(param, schemaCache, options)
+					warmParameterSchema(param, schemaCache, options, version)
 				}
 			}
 		}
 	}
 }
 
-// warmMediaTypeSchema warms the cache for a media type schema
-func warmMediaTypeSchema(mediaType *v3.MediaType, schemaCache cache.SchemaCache, options *config.ValidationOptions) {
+// warmMediaTypeSchema warms the cache for a media type schema.
+// version must match the spec's OpenAPI version so OAS 3.0 transforms
+// (nullable, enum coercion) are applied consistently with the validation path.
+func warmMediaTypeSchema(mediaType *v3.MediaType, schemaCache cache.SchemaCache, options *config.ValidationOptions, version float32) {
 	if mediaType != nil && mediaType.Schema != nil {
 		hash := mediaType.GoLow().Schema.Value.Hash()
 
@@ -585,7 +588,7 @@ func warmMediaTypeSchema(mediaType *v3.MediaType, schemaCache cache.SchemaCache,
 				referenceSchema := string(renderedInline)
 				renderedJSON, _ := utils.ConvertYAMLtoJSON(renderedInline)
 				if len(renderedInline) > 0 {
-					compiledSchema, _ := helpers.NewCompiledSchema(fmt.Sprintf("%x", hash), renderedJSON, options)
+					compiledSchema, _ := helpers.NewCompiledSchemaWithVersion(fmt.Sprintf("%x", hash), renderedJSON, options, version)
 
 					// Pre-parse YAML node for error reporting (avoids re-parsing on each error)
 					var renderedNode yaml.Node
@@ -606,7 +609,7 @@ func warmMediaTypeSchema(mediaType *v3.MediaType, schemaCache cache.SchemaCache,
 }
 
 // warmParameterSchema warms the cache for a parameter schema
-func warmParameterSchema(param *v3.Parameter, schemaCache cache.SchemaCache, options *config.ValidationOptions) {
+func warmParameterSchema(param *v3.Parameter, schemaCache cache.SchemaCache, options *config.ValidationOptions, version float32) {
 	if param != nil {
 		var schema *base.Schema
 		var hash uint64
@@ -638,7 +641,7 @@ func warmParameterSchema(param *v3.Parameter, schemaCache cache.SchemaCache, opt
 				referenceSchema := string(renderedInline)
 				renderedJSON, _ := utils.ConvertYAMLtoJSON(renderedInline)
 				if len(renderedInline) > 0 {
-					compiledSchema, _ := helpers.NewCompiledSchema(fmt.Sprintf("%x", hash), renderedJSON, options)
+					compiledSchema, _ := helpers.NewCompiledSchemaWithVersion(fmt.Sprintf("%x", hash), renderedJSON, options, version)
 
 					// Pre-parse YAML node for error reporting (avoids re-parsing on each error)
 					var renderedNode yaml.Node

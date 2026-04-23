@@ -965,3 +965,25 @@ func TestTransformNullableSchema_OneOf(t *testing.T) {
 	assert.Equal(t, "null", lastVariant["type"],
 		"last oneOf variant should be {type: null}")
 }
+
+func TestOAS30Keywords_EnumCoercion(t *testing.T) {
+	schema := map[string]interface{}{
+		"type": "string",
+		"enum": []interface{}{"UNKNOWN", true, false, "PASSING"},
+	}
+
+	result := transformOAS30Keywords(schema)
+	resultMap := result.(map[string]interface{})
+	enum := resultMap["enum"].([]interface{})
+
+	// All values should now be strings
+	for _, v := range enum {
+		_, isStr := v.(string)
+		assert.True(t, isStr, "enum value %v (%T) should be string", v, v)
+	}
+
+	assert.Contains(t, enum, "true")
+	assert.Contains(t, enum, "false")
+	assert.Contains(t, enum, "UNKNOWN")
+	assert.Contains(t, enum, "PASSING")
+}
