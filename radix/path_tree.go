@@ -47,8 +47,35 @@ func (t *PathTree) Insert(path string, pathItem *v3.PathItem) {
 
 // Lookup finds the PathItem for a given request path.
 // Returns the PathItem, the matched path template, and whether a match was found.
+// When multiple param paths match (e.g., /v1/{name} and /v1/{groupName}),
+// returns the first one. Use LookupAll to get all candidates.
 func (t *PathTree) Lookup(urlPath string) (*v3.PathItem, string, bool) {
 	return t.tree.Lookup(urlPath)
+}
+
+// LookupAll returns all matching PathItems for a given request path.
+// Multiple matches occur when different param names map to the same
+// tree node (e.g., /v1/{groupName} and /v1/{name}).
+func (t *PathTree) LookupAll(urlPath string) []struct {
+	PathItem *v3.PathItem
+	Path     string
+} {
+	leaves := t.tree.LookupAll(urlPath)
+	if len(leaves) == 0 {
+		return nil
+	}
+
+	results := make([]struct {
+		PathItem *v3.PathItem
+		Path     string
+	}, len(leaves))
+
+	for i, l := range leaves {
+		results[i].PathItem = l.value
+		results[i].Path = l.path
+	}
+
+	return results
 }
 
 // Size returns the number of paths stored in the tree.

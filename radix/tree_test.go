@@ -861,3 +861,36 @@ func TestTree_ColonCustomMethods(t *testing.T) {
 	assert.Equal(t, "get", val)
 	assert.Equal(t, "/v1/acmeChallengeSets/{rootDomain}", path)
 }
+
+func TestTree_MultipleParamPathsSameDepth(t *testing.T) {
+	// Google clouderrorreporting has both /v1beta1/{groupName} (GET)
+	// and /v1beta1/{name} (PUT). Two different param paths at the same
+	// depth with different leaf values. Both must be stored — the second
+	// insert must NOT overwrite the first.
+	tree := New[string]()
+
+	tree.Insert("/v1beta1/{groupName}", "group")
+	tree.Insert("/v1beta1/{name}", "name")
+	tree.Insert("/v1beta1/{projectName}/events", "events")
+
+	assert.Equal(t, 3, tree.Size(), "all three paths should be stored")
+
+	// Walk should find all three paths.
+	var paths []string
+	tree.Walk(func(path string, _ string) bool {
+		paths = append(paths, path)
+		return true
+	})
+	assert.Len(t, paths, 3, "walk should visit all three paths")
+
+	// Lookup should find at least one param match.
+	val, _, found := tree.Lookup("/v1beta1/some-value")
+	assert.True(t, found)
+	assert.Contains(t, []string{"group", "name"}, val)
+
+	// The deeper path should still work.
+	val, path, found := tree.Lookup("/v1beta1/my-project/events")
+	assert.True(t, found)
+	assert.Equal(t, "events", val)
+	assert.Equal(t, "/v1beta1/{projectName}/events", path)
+}

@@ -38,10 +38,32 @@ func FindPath(request *http.Request, document *v3.Document, options *config.Vali
 	// Fast path: try radix tree first (O(k) where k = path depth)
 	// If no path lookup is provided, we will fall back to regex-based matching.
 	if options != nil && options.PathTree != nil {
-		if pathItem, matchedPath, found := options.PathTree.Lookup(stripped); found {
+		// Try LookupAll first to handle multiple param paths at the same
+		// depth (e.g., /v1/{groupName} and /v1/{name} with different methods).
+		type allLookup interface {
+			LookupAll(string) []struct {
+				PathItem *v3.PathItem
+				Path     string
+			}
+		}
+
+		if al, ok := options.PathTree.(allLookup); ok {
+			if candidates := al.LookupAll(stripped); len(candidates) > 0 {
+				// Check each candidate for the right method.
+				for _, c := range candidates {
+					if pathHasMethod(c.PathItem, request.Method) {
+						return c.PathItem, nil, c.Path
+					}
+				}
+
+				// No method match — return the first candidate with a method error.
+				return candidates[0].PathItem, missingOperationError(request, candidates[0].Path), candidates[0].Path
+			}
+		} else if pathItem, matchedPath, found := options.PathTree.Lookup(stripped); found {
 			if pathHasMethod(pathItem, request.Method) {
 				return pathItem, nil, matchedPath
 			}
+
 			return pathItem, missingOperationError(request, matchedPath), matchedPath
 		}
 	}

@@ -44,14 +44,24 @@ type node[T any] struct {
 	// During lookup, the request segment is checked for each suffix.
 	suffixChildren map[string]*node[T]
 
-	// leaf contains the stored value and path template for endpoints
-	leaf *leafData[T]
+	// leaves contains the stored values and path templates for endpoints.
+	// Multiple leaves occur when different param names map to the same
+	// node (e.g., /v1/{groupName} and /v1/{name}).
+	leaves []leafData[T]
 }
 
-// leafData stores the value and original path template for a leaf node.
+// leafData stores a value and its original path template.
 type leafData[T any] struct {
 	value T
 	path  string
+}
+
+func (n *node[T]) firstLeaf() *leafData[T] {
+	if len(n.leaves) == 0 {
+		return nil
+	}
+
+	return &n.leaves[0]
 }
 
 // New creates a new empty radix tree.
@@ -75,7 +85,6 @@ func (t *Tree[T]) Insert(path string, value T) bool {
 
 	segments := splitPath(path)
 	n := t.root
-	isNew := true
 
 	for _, seg := range segments {
 		if suffix := paramSuffix(seg); suffix != "" {
@@ -114,20 +123,19 @@ func (t *Tree[T]) Insert(path string, value T) bool {
 		}
 	}
 
-	// Check if this is a new path or an update
-	if n.leaf != nil {
-		isNew = false
-	} else {
-		t.size++
+	// Check if this path already exists (update vs new).
+	for i, l := range n.leaves {
+		if l.path == path {
+			n.leaves[i] = leafData[T]{value: value, path: path}
+
+			return false
+		}
 	}
 
-	// Set the leaf data
-	n.leaf = &leafData[T]{
-		value: value,
-		path:  path,
-	}
+	n.leaves = append(n.leaves, leafData[T]{value: value, path: path})
+	t.size++
 
-	return isNew
+	return true
 }
 
 // Lookup finds the value for a given URL path.
@@ -150,12 +158,65 @@ func (t *Tree[T]) Lookup(urlPath string) (value T, matchedPath string, found boo
 	return zero, "", false
 }
 
+// LookupAll returns all matching leaves for a given URL path. Multiple leaves
+// occur when different param names map to the same tree node (e.g.,
+// /v1/{groupName} and /v1/{name}). The caller should check which leaf's
+// PathItem has the desired HTTP method.
+func (t *Tree[T]) LookupAll(urlPath string) []leafData[T] {
+	if t.root == nil {
+		return nil
+	}
+
+	segments := splitPath(urlPath)
+	n := t.lookupNode(t.root, segments, 0)
+
+	if n == nil {
+		return nil
+	}
+
+	return n.leaves
+}
+
+func (t *Tree[T]) lookupNode(n *node[T], segments []string, depth int) *node[T] {
+	if depth == len(segments) {
+		if len(n.leaves) > 0 {
+			return n
+		}
+
+		return nil
+	}
+
+	seg := segments[depth]
+
+	if child, exists := n.children[seg]; exists {
+		if result := t.lookupNode(child, segments, depth+1); result != nil {
+			return result
+		}
+	}
+
+	for suffix, child := range n.suffixChildren {
+		if strings.HasSuffix(seg, suffix) {
+			if result := t.lookupNode(child, segments, depth+1); result != nil {
+				return result
+			}
+		}
+	}
+
+	if n.paramChild != nil {
+		if result := t.lookupNode(n.paramChild, segments, depth+1); result != nil {
+			return result
+		}
+	}
+
+	return nil
+}
+
 // lookupRecursive performs the tree traversal.
 // It prioritizes literal matches over parameter matches.
 func (t *Tree[T]) lookupRecursive(n *node[T], segments []string, depth int) *leafData[T] {
 	// Base case: consumed all segments
 	if depth == len(segments) {
-		return n.leaf
+		return n.firstLeaf()
 	}
 
 	seg := segments[depth]
@@ -208,8 +269,8 @@ func (t *Tree[T]) Walk(fn func(path string, value T) bool) {
 }
 
 func (t *Tree[T]) walkRecursive(n *node[T], fn func(path string, value T) bool) bool {
-	if n.leaf != nil {
-		if !fn(n.leaf.path, n.leaf.value) {
+	for _, l := range n.leaves {
+		if !fn(l.path, l.value) {
 			return false
 		}
 	}
