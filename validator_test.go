@@ -1996,18 +1996,10 @@ components:
 		},
 		Body: io.NopCloser(strings.NewReader(`{"code":"abc","details":[{"code":"def"}]}`)),
 	}
-	if ok, errs := oapiValidator.ValidateHttpResponse(req, res); !ok {
-		assert.Equal(t, 1, len(errs))
-		// Error message can vary depending on whether schema was cached during warming or not:
-		// - "schema render failure, circular reference" (if caught during validation)
-		// - "JSON schema compile failed: json-pointer...not found" (if schema was pre-warmed but has circular refs)
-		// Both indicate the same underlying issue - circular reference in the schema
-		assert.True(t,
-			strings.Contains(errs[0].Reason, "circular reference") ||
-				strings.Contains(errs[0].Reason, "json-pointer") ||
-				strings.Contains(errs[0].Reason, "not found"),
-			"Expected error about circular reference or compilation failure, got: %s", errs[0].Reason)
-	}
+	// With the libopenapi circular ref fix, circular schemas produce
+	// permissive placeholders. Validation passes.
+	ok, _ := oapiValidator.ValidateHttpResponse(req, res)
+	assert.True(t, ok, "circular ref schemas should validate with permissive placeholders")
 }
 
 // https://github.com/pb33f/libopenapi-validator/issues/107
@@ -2070,11 +2062,10 @@ components:
 			Path: "/operations",
 		},
 	}
-	if ok, errs := oapiValidator.ValidateHttpRequest(req); !ok {
-		assert.Equal(t, 1, len(errs))
-		assert.Equal(t, "cannot render circular reference: #/components/schemas/Error", errs[0].Reason)
-
-	}
+	// With the libopenapi circular ref fix, circular schemas produce
+	// permissive placeholders. Validation passes.
+	ok, _ := oapiValidator.ValidateHttpRequest(req)
+	assert.True(t, ok, "circular ref schemas should validate with permissive placeholders")
 }
 
 // https://github.com/pb33f/libopenapi-validator/issues/86

@@ -286,10 +286,10 @@ components:
 		Version:  3.1,
 	})
 
-	assert.False(t, valid)
-	require.Len(t, errors, 1)
-	assert.Contains(t, errors[0].Message, "failed schema rendering")
-	assert.Contains(t, errors[0].Reason, "circular reference")
+	// With the libopenapi circular ref fix, circular schemas produce
+	// permissive placeholders instead of render failures.
+	assert.True(t, valid)
+	assert.Empty(t, errors)
 }
 
 func TestValidateResponseSchema_ResponseMissing(t *testing.T) {
