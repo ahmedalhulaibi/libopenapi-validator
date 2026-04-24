@@ -826,3 +826,38 @@ func BenchmarkTree_Lookup_VaryingIDs(b *testing.B) {
 		tree.Lookup(testPaths[i%1000])
 	}
 }
+
+func TestTree_ColonCustomMethods(t *testing.T) {
+	// Google APIs use {resource}:action convention for custom methods.
+	// The colon and suffix are literal parts of the path, not parameters.
+	tree := New[string]()
+
+	tree.Insert("/v1/acmeChallengeSets/{rootDomain}:rotateChallenges", "rotate")
+	tree.Insert("/v1/acmeChallengeSets/{rootDomain}", "get")
+	tree.Insert("/v1/documents:analyzeSentiment", "analyze")
+
+	// Colon custom method should match
+	val, path, found := tree.Lookup("/v1/acmeChallengeSets/example.com:rotateChallenges")
+	assert.True(t, found, "should match colon custom method path")
+	assert.Equal(t, "rotate", val)
+	assert.Equal(t, "/v1/acmeChallengeSets/{rootDomain}:rotateChallenges", path)
+
+	// Without colon suffix should match the plain param path
+	val, path, found = tree.Lookup("/v1/acmeChallengeSets/example.com")
+	assert.True(t, found, "should match plain param path")
+	assert.Equal(t, "get", val)
+	assert.Equal(t, "/v1/acmeChallengeSets/{rootDomain}", path)
+
+	// Literal colon path (no param) should match
+	val, path, found = tree.Lookup("/v1/documents:analyzeSentiment")
+	assert.True(t, found, "should match literal colon path")
+	assert.Equal(t, "analyze", val)
+	assert.Equal(t, "/v1/documents:analyzeSentiment", path)
+
+	// Wrong colon suffix falls back to plain param match (the colon
+	// is just part of the param value when no suffix route matches).
+	val, path, found = tree.Lookup("/v1/acmeChallengeSets/example.com:wrongAction")
+	assert.True(t, found, "falls back to plain param match")
+	assert.Equal(t, "get", val)
+	assert.Equal(t, "/v1/acmeChallengeSets/{rootDomain}", path)
+}

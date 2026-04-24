@@ -39,6 +39,11 @@ type node[T any] struct {
 	// paramName stores the parameter name without braces (e.g., "id" from "{id}")
 	paramName string
 
+	// suffixChildren handles segments like {param}:action where a param is
+	// followed by a literal suffix. Maps suffix → child node.
+	// During lookup, the request segment is checked for each suffix.
+	suffixChildren map[string]*node[T]
+
 	// leaf contains the stored value and path template for endpoints
 	leaf *leafData[T]
 }
@@ -73,8 +78,24 @@ func (t *Tree[T]) Insert(path string, value T) bool {
 	isNew := true
 
 	for _, seg := range segments {
-		if isParam(seg) {
-			// Parameter segment
+		if suffix := paramSuffix(seg); suffix != "" {
+			// Parameter with literal suffix: {param}:action
+			if n.suffixChildren == nil {
+				n.suffixChildren = make(map[string]*node[T])
+			}
+
+			child, exists := n.suffixChildren[suffix]
+			if !exists {
+				child = &node[T]{
+					children:  make(map[string]*node[T]),
+					paramName: extractParamName(seg),
+				}
+				n.suffixChildren[suffix] = child
+			}
+
+			n = child
+		} else if isParam(seg) {
+			// Pure parameter segment
 			if n.paramChild == nil {
 				n.paramChild = &node[T]{
 					children:  make(map[string]*node[T]),
@@ -139,14 +160,23 @@ func (t *Tree[T]) lookupRecursive(n *node[T], segments []string, depth int) *lea
 
 	seg := segments[depth]
 
-	// Try literal match first (higher specificity)
+	// Try literal match first (highest specificity)
 	if child, exists := n.children[seg]; exists {
 		if result := t.lookupRecursive(child, segments, depth+1); result != nil {
 			return result
 		}
 	}
 
-	// Fall back to parameter match
+	// Try suffix matches (e.g., {param}:action — higher specificity than pure param)
+	for suffix, child := range n.suffixChildren {
+		if strings.HasSuffix(seg, suffix) {
+			if result := t.lookupRecursive(child, segments, depth+1); result != nil {
+				return result
+			}
+		}
+	}
+
+	// Fall back to parameter match (lowest specificity)
 	if n.paramChild != nil {
 		if result := t.lookupRecursive(n.paramChild, segments, depth+1); result != nil {
 			return result
@@ -190,6 +220,12 @@ func (t *Tree[T]) walkRecursive(n *node[T], fn func(path string, value T) bool) 
 		}
 	}
 
+	for _, child := range n.suffixChildren {
+		if !t.walkRecursive(child, fn) {
+			return false
+		}
+	}
+
 	if n.paramChild != nil {
 		if !t.walkRecursive(n.paramChild, fn) {
 			return false
@@ -219,16 +255,38 @@ func splitPath(path string) []string {
 	return result
 }
 
-// isParam checks if a segment is a parameter (e.g., "{id}")
+// isParam checks if a segment is a pure parameter (e.g., "{id}")
 func isParam(seg string) bool {
 	return len(seg) > 2 && seg[0] == '{' && seg[len(seg)-1] == '}'
 }
 
-// extractParamName extracts the parameter name from a segment.
-// "{id}" -> "id", "{userId}" -> "userId"
-func extractParamName(seg string) string {
-	if len(seg) > 2 && seg[0] == '{' && seg[len(seg)-1] == '}' {
-		return seg[1 : len(seg)-1]
+// isParamWithSuffix checks if a segment is a parameter followed by a literal
+// suffix, e.g., "{rootDomain}:rotateChallenges". Returns the suffix (including
+// the separator) or "" if not a param-with-suffix.
+func paramSuffix(seg string) string {
+	closeBrace := strings.IndexByte(seg, '}')
+	if closeBrace < 0 || seg[0] != '{' {
+		return ""
 	}
-	return seg
+
+	if closeBrace == len(seg)-1 {
+		return "" // pure param, no suffix
+	}
+
+	return seg[closeBrace+1:]
+}
+
+// extractParamName extracts the parameter name from a segment.
+// "{id}" -> "id", "{userId}" -> "userId", "{rootDomain}:action" -> "rootDomain"
+func extractParamName(seg string) string {
+	if len(seg) < 3 || seg[0] != '{' {
+		return seg
+	}
+
+	closeBrace := strings.IndexByte(seg, '}')
+	if closeBrace < 2 {
+		return seg
+	}
+
+	return seg[1:closeBrace]
 }
