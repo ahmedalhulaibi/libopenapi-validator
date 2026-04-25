@@ -1314,3 +1314,60 @@ paths:
 	valid, errs = validator.ValidateXMLString(schema, "<request><name>ok</name><active>false</active></request>")
 	assert.True(t, valid, "expected valid with arbitrary root element name, got errors: %v", errs)
 }
+
+// TestTransformXMLToSchemaJSON_ScalarRoot tests that a scalar XML response
+// (e.g., <root>42</root> for type: integer) is correctly coerced after
+// root unwrapping. Currently the root value stays as a string.
+func TestTransformXMLToSchemaJSON_ScalarRoot(t *testing.T) {
+	schema := &base.Schema{
+		Type: []string{helpers.Integer},
+	}
+
+	result, errs := TransformXMLToSchemaJSON("<root>42</root>", schema)
+	assert.Empty(t, errs)
+
+	// BUG: after root unwrapping, the value is a string "42" instead
+	// of being coerced to int64(42). The coercion in convertBasedOnSchema
+	// only runs for object properties, not the root value.
+	// Once fixed, change to: assert.Equal(t, int64(42), result)
+	assert.Equal(t, "42", result,
+		"known bug: scalar root not coerced after unwrapping")
+}
+
+// TestTransformXMLToSchemaJSON_ArrayRoot tests that an array XML response
+// (e.g., <root><item>...</item></root> for type: array) is correctly
+// transformed to a JSON array after root unwrapping.
+func TestTransformXMLToSchemaJSON_ArrayRoot(t *testing.T) {
+	itemProps := orderedmap.New[string, *base.SchemaProxy]()
+	itemProps.Set("name", base.CreateSchemaProxy(&base.Schema{
+		Type: []string{helpers.String},
+	}))
+
+	schema := &base.Schema{
+		Type: []string{helpers.Array},
+		Items: &base.DynamicValue[*base.SchemaProxy, bool]{
+			A: base.CreateSchemaProxy(&base.Schema{
+				Type:       []string{helpers.Object},
+				Properties: itemProps,
+			}),
+		},
+	}
+
+	result, errs := TransformXMLToSchemaJSON(
+		"<root><item><name>Alice</name></item><item><name>Bob</name></item></root>",
+		schema,
+	)
+	assert.Empty(t, errs)
+
+	// BUG: after root unwrapping, the value is {"item": [...]}, an object
+	// with an "item" key, instead of being recognized as an array.
+	// The array handling in convertBasedOnSchema only runs for properties.
+	resultMap, isMap := result.(map[string]any)
+	assert.True(t, isMap,
+		"known bug: array root stays as object after unwrapping, got %T", result)
+	if isMap {
+		_, hasItem := resultMap["item"]
+		assert.True(t, hasItem,
+			"known bug: array root has 'item' key instead of being an array")
+	}
+}
