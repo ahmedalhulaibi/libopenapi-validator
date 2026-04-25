@@ -249,6 +249,32 @@ func applyXMLTransformations(data any, schema *base.Schema, xmlNsMap *map[string
 		}
 	}
 
+	// After root unwrapping, apply type coercion for non-object/non-string root
+	// schemas. Scalars (integer, number, boolean) need coercion from XML text.
+	// Arrays need element-name unwrapping. Strings and objects are already correct.
+	if len(schema.Type) > 0 &&
+		schema.Type[0] != helpers.Object &&
+		schema.Type[0] != helpers.String {
+		// For root-level arrays, the root unwrap produces {"elementName": [...]}.
+		// Extract the inner array before passing to convertBasedOnSchema.
+		if schema.Type[0] == helpers.Array {
+			if dataMap, ok := data.(map[string]any); ok && len(dataMap) == 1 {
+				for _, v := range dataMap {
+					data = v
+
+					break
+				}
+			}
+		}
+
+		converted, errs := convertBasedOnSchema("", "", data, schema, xmlNsMap)
+		if len(errs) == 0 {
+			data = converted
+		}
+
+		return data, errs
+	}
+
 	var xmlNsErrors []*liberrors.ValidationError
 
 	// transform properties based on their xml configurations

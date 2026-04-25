@@ -1326,12 +1326,8 @@ func TestTransformXMLToSchemaJSON_ScalarRoot(t *testing.T) {
 	result, errs := TransformXMLToSchemaJSON("<root>42</root>", schema)
 	assert.Empty(t, errs)
 
-	// BUG: after root unwrapping, the value is a string "42" instead
-	// of being coerced to int64(42). The coercion in convertBasedOnSchema
-	// only runs for object properties, not the root value.
-	// Once fixed, change to: assert.Equal(t, int64(42), result)
-	assert.Equal(t, "42", result,
-		"known bug: scalar root not coerced after unwrapping")
+	assert.Equal(t, int64(42), result,
+		"scalar root should be coerced to int64 after unwrapping")
 }
 
 // TestTransformXMLToSchemaJSON_ArrayRoot tests that an array XML response
@@ -1359,15 +1355,11 @@ func TestTransformXMLToSchemaJSON_ArrayRoot(t *testing.T) {
 	)
 	assert.Empty(t, errs)
 
-	// BUG: after root unwrapping, the value is {"item": [...]}, an object
-	// with an "item" key, instead of being recognized as an array.
-	// The array handling in convertBasedOnSchema only runs for properties.
-	resultMap, isMap := result.(map[string]any)
-	assert.True(t, isMap,
-		"known bug: array root stays as object after unwrapping, got %T", result)
-	if isMap {
-		_, hasItem := resultMap["item"]
-		assert.True(t, hasItem,
-			"known bug: array root has 'item' key instead of being an array")
+	resultArr, isArr := result.([]any)
+	assert.True(t, isArr,
+		"array root should be unwrapped to []any, got %T", result)
+
+	if isArr {
+		assert.Len(t, resultArr, 2, "should have 2 array items")
 	}
 }
