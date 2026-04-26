@@ -113,10 +113,60 @@ func validateXmlNs(dataMap *map[string]any, schema *base.Schema, propName string
 	return validationErrors
 }
 
+// resolveAllOfForXML merges allOf branches into an effective schema for
+// XML type coercion. When a property schema is allOf: [{$ref: Type}, {description}],
+// the type, items, properties, and XML metadata live on the $ref branch,
+// not the top-level schema. This function returns a schema with those
+// fields populated so convertBasedOnSchema can coerce values correctly.
+func resolveAllOfForXML(schema *base.Schema) *base.Schema {
+	visited := make(map[*base.Schema]struct{})
+	return resolveAllOfWalk(schema, visited)
+}
+
+func resolveAllOfWalk(schema *base.Schema, visited map[*base.Schema]struct{}) *base.Schema {
+	if _, seen := visited[schema]; seen {
+		return schema
+	}
+	visited[schema] = struct{}{}
+
+	if len(schema.AllOf) == 0 {
+		return schema
+	}
+
+	// If the schema already has a type, items, or properties, use it as-is.
+	if len(schema.Type) > 0 || schema.Items != nil ||
+		(schema.Properties != nil && schema.Properties.Len() > 0) {
+		return schema
+	}
+
+	// Walk allOf branches and pick up type, items, properties, XML from
+	// the first branch that has them.
+	for _, proxy := range schema.AllOf {
+		branch := proxy.Schema()
+		if branch == nil {
+			continue
+		}
+
+		resolved := resolveAllOfWalk(branch, visited)
+
+		if len(resolved.Type) > 0 || resolved.Items != nil ||
+			(resolved.Properties != nil && resolved.Properties.Len() > 0) {
+			return resolved
+		}
+	}
+
+	return schema
+}
+
 func convertBasedOnSchema(propName, xmlName string, propValue any, schema *base.Schema, xmlNsMap *map[string]string) (any, []*liberrors.ValidationError) {
 	var xmlNsErrors []*liberrors.ValidationError
 
-	types := schema.Type
+	// Resolve the effective schema: when the schema is purely an allOf
+	// wrapper (no direct type/properties), merge the allOf branches to
+	// get the actual type, items, and properties for coercion.
+	effective := resolveAllOfForXML(schema)
+
+	types := effective.Type
 
 	extractTypes := func(proxies []*base.SchemaProxy) {
 		for _, proxy := range proxies {
@@ -127,9 +177,9 @@ func convertBasedOnSchema(propName, xmlName string, propValue any, schema *base.
 		}
 	}
 
-	extractTypes(schema.AllOf)
-	extractTypes(schema.OneOf)
-	extractTypes(schema.AnyOf)
+	extractTypes(effective.AllOf)
+	extractTypes(effective.OneOf)
+	extractTypes(effective.AnyOf)
 
 	convertedValue := propValue
 
@@ -174,12 +224,12 @@ typesLoop:
 		case helpers.Array:
 			convertedValue = propValue
 
-			if schema.XML != nil && schema.XML.Wrapped {
-				convertedValue = unwrapArrayElement(propValue, propName, schema)
+			if effective.XML != nil && effective.XML.Wrapped {
+				convertedValue = unwrapArrayElement(propValue, propName, effective)
 			}
 
-			if schema.Items != nil && schema.Items.A != nil {
-				itemSchema := schema.Items.A.Schema()
+			if effective.Items != nil && effective.Items.A != nil {
+				itemSchema := effective.Items.A.Schema()
 
 				arr, isArr := convertedValue.([]any)
 
@@ -206,7 +256,7 @@ typesLoop:
 			objectValue, isObject := propValue.(map[string]any)
 
 			if isObject {
-				newValue, xmlErrors := applyXMLTransformations(objectValue, schema, xmlNsMap)
+				newValue, xmlErrors := applyXMLTransformations(objectValue, effective, xmlNsMap)
 
 				if len(xmlErrors) > 0 {
 					xmlNsErrors = append(xmlNsErrors, xmlErrors...)
@@ -231,6 +281,9 @@ func applyXMLTransformations(data any, schema *base.Schema, xmlNsMap *map[string
 	if schema == nil || data == nil || xmlNsMap == nil {
 		return data, nil
 	}
+
+	// Resolve allOf wrappers so we can access type, properties, items.
+	schema = resolveAllOfForXML(schema)
 
 	// unwrap root element
 	if dataMap, ok := data.(map[string]any); ok {

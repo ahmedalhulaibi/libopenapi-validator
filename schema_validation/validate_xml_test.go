@@ -1363,3 +1363,79 @@ func TestTransformXMLToSchemaJSON_ArrayRoot(t *testing.T) {
 		assert.Len(t, resultArr, 2, "should have 2 array items")
 	}
 }
+
+func TestTransformXML_AllOfPropertyCoercion(t *testing.T) {
+	// Regression: properties behind allOf:[{$ref: Type}, {description}] were
+	// not coerced because the XML transform didn't resolve allOf to find
+	// the actual type, items, or properties.
+	spec := `openapi: "3.1.0"
+info:
+  title: test
+  version: "1.0"
+components:
+  schemas:
+    Integer:
+      type: integer
+    ItemList:
+      type: array
+      items:
+        $ref: '#/components/schemas/Item'
+    Item:
+      type: object
+      properties:
+        Count:
+          allOf:
+            - $ref: '#/components/schemas/Integer'
+            - description: "A count"
+        Name:
+          type: string
+paths:
+  /test:
+    post:
+      requestBody:
+        content:
+          text/xml:
+            schema:
+              type: object
+              xml:
+                name: Request
+              properties:
+                DryRun:
+                  allOf:
+                    - $ref: '#/components/schemas/Integer'
+                    - description: "boolean flag stored as int"
+                Items:
+                  allOf:
+                    - $ref: '#/components/schemas/ItemList'
+                    - description: "list of items"`
+
+	doc, _ := libopenapi.NewDocument([]byte(spec))
+	m, _ := doc.BuildV3Model()
+
+	pi := m.Model.Paths.PathItems.GetOrZero("/test")
+	schema := pi.Post.RequestBody.Content.GetOrZero("text/xml").Schema.Schema()
+
+	xml := "<Request><DryRun>42</DryRun><Items><Item><Count>7</Count><Name>hello</Name></Item></Items></Request>"
+
+	result, errs := TransformXMLToSchemaJSON(xml, schema)
+	assert.Empty(t, errs)
+
+	m2, ok := result.(map[string]any)
+	assert.True(t, ok)
+
+	// DryRun should be coerced from string "42" to int64
+	assert.Equal(t, int64(42), m2["DryRun"], "allOf integer property should be coerced")
+
+	// Items should be an array
+	items, ok := m2["Items"].([]any)
+	assert.True(t, ok, "allOf array property should be unwrapped to []any, got %T", m2["Items"])
+	assert.Len(t, items, 1)
+
+	// Item.Count should be coerced to int64
+	if len(items) > 0 {
+		item, ok := items[0].(map[string]any)
+		assert.True(t, ok)
+		assert.Equal(t, int64(7), item["Count"], "nested allOf integer should be coerced")
+		assert.Equal(t, "hello", item["Name"])
+	}
+}
