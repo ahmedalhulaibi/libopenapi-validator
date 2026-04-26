@@ -140,10 +140,24 @@ func (v *requestBodyValidator) ValidateRequestBodyWithPathItem(request *http.Req
 
 func (v *requestBodyValidator) extractContentType(contentType string, operation *v3.Operation) (*v3.MediaType, bool) {
 	ct, _, _ := helpers.ExtractContentType(contentType)
+
+	// Exact match on stripped base type.
 	mediaType, ok := operation.RequestBody.Content.Get(ct)
 	if ok {
 		return mediaType, true
 	}
+
+	// Strip declared-side parameters too — the spec may declare
+	// "application/json;version=2018-01-01" while the request sends the
+	// same string. Match on base media type, same as the response validator.
+	for declaredCT, declared := range operation.RequestBody.Content.FromOldest() {
+		declaredBase, _, _ := helpers.ExtractContentType(declaredCT)
+		if declaredBase == ct {
+			return declared, true
+		}
+	}
+
+	// Media range wildcards (e.g., "application/*" or "*/*").
 	ctMediaRange := strings.SplitN(ct, "/", 2)
 	for contentPair := operation.RequestBody.Content.First(); contentPair != nil; contentPair = contentPair.Next() {
 		s := contentPair.Key()

@@ -1965,3 +1965,39 @@ components:
 		assert.NotEmpty(t, errors)
 	})
 }
+
+func TestValidateBody_ParameterizedContentType(t *testing.T) {
+	// Regression: specs declaring parameterized content types like
+	// "application/json;version=2018-01-01" were rejected because
+	// extractContentType stripped parameters before lookup.
+	spec := `openapi: 3.1.0
+paths:
+  /items:
+    put:
+      requestBody:
+        required: true
+        content:
+          application/json;version=2018-01-01:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required:
+                - name`
+
+	doc, _ := libopenapi.NewDocument([]byte(spec))
+	m, _ := doc.BuildV3Model()
+	v := NewRequestBodyValidator(&m.Model)
+
+	body := map[string]any{"name": "test"}
+	bodyBytes, _ := json.Marshal(body)
+
+	request, _ := http.NewRequest(http.MethodPut, "https://example.com/items",
+		bytes.NewBuffer(bodyBytes))
+	request.Header.Set("Content-Type", "application/json;version=2018-01-01")
+
+	valid, errors := v.ValidateRequestBody(request)
+	assert.True(t, valid, "parameterized content type should match: %v", errors)
+	assert.Empty(t, errors)
+}
