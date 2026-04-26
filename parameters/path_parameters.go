@@ -43,11 +43,17 @@ func (v *paramValidator) ValidatePathParamsWithPathItem(request *http.Request, p
 			HowToFix: errors.HowToFixPath,
 		}}
 	}
-	// split the path into segments
-	submittedSegments := strings.Split(paths.StripRequestPath(request, v.document), helpers.Slash)
+	// Split the path into segments. StripRequestPath may append a URL
+	// fragment (e.g., "#analyzerArn") — strip it before splitting because
+	// fragments are OAS annotations, never sent over HTTP.
+	submittedPath := paths.StripRequestPath(request, v.document)
+	if idx := strings.IndexByte(submittedPath, '#'); idx >= 0 {
+		submittedPath = submittedPath[:idx]
+	}
 
-	// Strip URL fragment (e.g., "/finding/{id}#analyzerArn" → "/finding/{id}").
-	// Fragments are never sent over HTTP — they're OAS annotations only.
+	submittedSegments := strings.Split(submittedPath, helpers.Slash)
+
+	// Strip URL fragment from spec path too.
 	cleanPath := pathValue
 	if idx := strings.IndexByte(cleanPath, '#'); idx >= 0 {
 		cleanPath = cleanPath[:idx]
@@ -92,6 +98,10 @@ func (v *paramValidator) ValidatePathParamsWithPathItem(request *http.Request, p
 				}
 
 				matches := rgx.FindStringSubmatch(submittedSegments[x])
+				if matches == nil {
+					continue
+				}
+
 				matches = matches[1:]
 
 				// Check if it is well-formed.
