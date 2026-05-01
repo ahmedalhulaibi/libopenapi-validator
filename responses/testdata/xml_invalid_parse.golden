@@ -1,0 +1,3 @@
+message: xml example is malformed
+reason: failed to parse xml: empty xml content
+schema: empty xml content

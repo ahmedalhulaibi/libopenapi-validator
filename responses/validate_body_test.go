@@ -16,13 +16,33 @@ import (
 	"testing"
 
 	"github.com/pb33f/libopenapi"
+	"github.com/sebdah/goldie/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	liberrors "github.com/pb33f/libopenapi-validator/errors"
 
 	"github.com/pb33f/libopenapi-validator/config"
 	"github.com/pb33f/libopenapi-validator/helpers"
 	"github.com/pb33f/libopenapi-validator/paths"
 )
+
+func formatValidationErrors(errs []*liberrors.ValidationError) string {
+	var b strings.Builder
+	for i, e := range errs {
+		if i > 0 {
+			b.WriteString("\n---\n")
+		}
+		fmt.Fprintf(&b, "message: %s\n", e.Message)
+		if e.Reason != "" {
+			fmt.Fprintf(&b, "reason: %s\n", e.Reason)
+		}
+		for _, se := range e.SchemaValidationErrors {
+			fmt.Fprintf(&b, "schema: %s\n", se.Reason)
+		}
+	}
+	return b.String()
+}
 
 type validateResponseTestBed struct {
 	responseBodyValidator ResponseBodyValidator
@@ -1317,8 +1337,9 @@ paths:
 	valid, errors := tb.responseBodyValidator.ValidateResponseBody(req, res)
 
 	assert.False(t, valid)
-	assert.Len(t, errors, 1)
-	assert.Equal(t, errors[0].Message, "200 response body for '/test' failed to validate schema")
+
+	g := goldie.New(t, goldie.WithFixtureDir("testdata"))
+	g.Assert(t, "xml_marshal_error", []byte(formatValidationErrors(errors)))
 }
 
 func TestValidateResponseBody_URLEncodedMarshalError(t *testing.T) {
@@ -1896,8 +1917,9 @@ paths:
 	valid, errors := v.ValidateResponseBody(request, response)
 
 	assert.False(t, valid)
-	assert.Len(t, errors, 1)
-	assert.Equal(t, "xml example is malformed", errors[0].Message)
+
+	g := goldie.New(t, goldie.WithFixtureDir("testdata"))
+	g.Assert(t, "xml_invalid_parse", []byte(formatValidationErrors(errors)))
 }
 
 func TestValidateResponseBodyWithPathItem_NilResponses(t *testing.T) {

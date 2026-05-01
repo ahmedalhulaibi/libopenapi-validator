@@ -285,7 +285,12 @@ func applyXMLTransformations(data any, schema *base.Schema, xmlNsMap *map[string
 	// Resolve allOf wrappers so we can access type, properties, items.
 	schema = resolveAllOfForXML(schema)
 
-	// unwrap root element
+	// Unwrap root/wrapper elements. The goxml2json output wraps content
+	// in an element-named key. We unwrap when:
+	// - the schema has an explicit xml.name matching a key, or
+	// - there's a single key that is NOT a declared property (it's a wrapper)
+	// We do NOT unwrap when the single key IS a declared property name —
+	// that's a real nested object (e.g. {"Organization": {...}} inside IssuedBy).
 	if dataMap, ok := data.(map[string]any); ok {
 		if schema.XML != nil && schema.XML.Name != "" {
 			// explicit xml.name — unwrap that specific element
@@ -293,9 +298,22 @@ func applyXMLTransformations(data any, schema *base.Schema, xmlNsMap *map[string
 				data = wrapped
 			}
 		} else if len(dataMap) == 1 {
-			// no xml.name — unwrap single root element (standard XML→JSON pattern)
-			for _, wrapped := range dataMap {
-				data = wrapped
+			// Single key — unwrap only if it's NOT a declared property.
+			for key, wrapped := range dataMap {
+				isDeclaredProp := false
+				if schema.Properties != nil {
+					for pair := schema.Properties.First(); pair != nil; pair = pair.Next() {
+						if pair.Key() == key {
+							isDeclaredProp = true
+
+							break
+						}
+					}
+				}
+
+				if !isDeclaredProp {
+					data = wrapped
+				}
 
 				break
 			}

@@ -11,14 +11,36 @@ import (
 	"sync"
 	"testing"
 
+	"strings"
+
 	"github.com/pb33f/libopenapi"
+	"github.com/sebdah/goldie/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	liberrors "github.com/pb33f/libopenapi-validator/errors"
 
 	"github.com/pb33f/libopenapi-validator/config"
 	"github.com/pb33f/libopenapi-validator/helpers"
 	"github.com/pb33f/libopenapi-validator/paths"
 )
+
+func formatValidationErrors(errs []*liberrors.ValidationError) string {
+	var b strings.Builder
+	for i, e := range errs {
+		if i > 0 {
+			b.WriteString("\n---\n")
+		}
+		fmt.Fprintf(&b, "message: %s\n", e.Message)
+		if e.Reason != "" {
+			fmt.Fprintf(&b, "reason: %s\n", e.Reason)
+		}
+		for _, se := range e.SchemaValidationErrors {
+			fmt.Fprintf(&b, "schema: %s\n", se.Reason)
+		}
+	}
+	return b.String()
+}
 
 func TestValidateBody_NotRequiredBody(t *testing.T) {
 	spec := `openapi: 3.1.0
@@ -1649,8 +1671,9 @@ paths:
 	valid, errors := v.ValidateRequestBody(request)
 
 	assert.False(t, valid)
-	assert.Len(t, errors, 1)
-	assert.Equal(t, errors[0].Message, "POST request body for '/test' failed to validate schema")
+
+	g := goldie.New(t, goldie.WithFixtureDir("testdata"))
+	g.Assert(t, "xml_marshal_error", []byte(formatValidationErrors(errors)))
 }
 
 func TestValidateRequestBody_URLEncodedMarshalError(t *testing.T) {
