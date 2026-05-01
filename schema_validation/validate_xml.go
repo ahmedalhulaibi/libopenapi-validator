@@ -299,11 +299,17 @@ func applyXMLTransformations(data any, schema *base.Schema, xmlNsMap *map[string
 			}
 		} else if len(dataMap) == 1 {
 			// Single key — unwrap only if it's NOT a declared property.
+			// Also check dash-prefixed keys against xml attribute properties:
+			// goxml2json encodes XML attributes as "-attrName", and the attribute
+			// rename happens later. Without this check, a single-attribute object
+			// like <Photo format="jpg"/> (→ {"-format":"jpg"}) gets unwrapped to
+			// the bare string "jpg" before the attribute rename can fire.
 			for key, wrapped := range dataMap {
 				isDeclaredProp := false
 				if schema.Properties != nil {
+					trimmed := strings.TrimPrefix(key, "-")
 					for pair := schema.Properties.First(); pair != nil; pair = pair.Next() {
-						if pair.Key() == key {
+						if pair.Key() == key || pair.Key() == trimmed {
 							isDeclaredProp = true
 
 							break
