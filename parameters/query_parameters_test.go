@@ -3981,3 +3981,95 @@ paths:
 	assert.True(t, valid, "issue #91: item_count=10 with type: string should not fail with 'expected string, but got number'")
 	assert.Empty(t, errors)
 }
+
+// TestContentEncodedQueryParam_JSONArray validates that a query parameter
+// using content/application/json encoding with an array-of-integers schema
+// accepts a JSON-encoded array value like [1,2,3].
+//
+// Reproduces: the validator treats the raw JSON string "[1303]" as a single
+// array item and tries strconv.ParseInt("[1303]"), which fails.
+func TestContentEncodedQueryParam_JSONArray(t *testing.T) {
+	spec := `openapi: 3.1.0
+info:
+  title: Test
+  version: "1.0"
+paths:
+  /items:
+    delete:
+      operationId: deleteItems
+      parameters:
+        - name: q
+          in: query
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: integer
+      responses:
+        "200":
+          description: OK`
+
+	doc, err := libopenapi.NewDocument([]byte(spec))
+	require.NoError(t, err)
+	m, errs := doc.BuildV3Model()
+	require.Empty(t, errs)
+
+	v := NewParameterValidator(&m.Model)
+
+	// JSON-encoded array: q=[1,2,3]
+	request, _ := http.NewRequest(http.MethodDelete,
+		"https://localhost/items?q=%5B1%2C2%2C3%5D", nil)
+
+	valid, valErrs := v.ValidateQueryParams(request)
+	assert.True(t, valid, "JSON-encoded array [1,2,3] should be valid for content/application/json param")
+	for _, ve := range valErrs {
+		t.Errorf("unexpected validation error: %s | %s", ve.Message, ve.Reason)
+	}
+}
+
+// TestContentEncodedQueryParam_JSONObject validates that a query parameter
+// using content/application/json encoding with an object schema accepts a
+// JSON-encoded object value.
+func TestContentEncodedQueryParam_JSONObject(t *testing.T) {
+	spec := `openapi: 3.1.0
+info:
+  title: Test
+  version: "1.0"
+paths:
+  /search:
+    get:
+      operationId: search
+      parameters:
+        - name: filter
+          in: query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  limit:
+                    type: integer
+      responses:
+        "200":
+          description: OK`
+
+	doc, err := libopenapi.NewDocument([]byte(spec))
+	require.NoError(t, err)
+	m, errs := doc.BuildV3Model()
+	require.Empty(t, errs)
+
+	v := NewParameterValidator(&m.Model)
+
+	// JSON-encoded object: filter={"name":"foo","limit":10}
+	request, _ := http.NewRequest(http.MethodGet,
+		`https://localhost/search?filter=%7B%22name%22%3A%22foo%22%2C%22limit%22%3A10%7D`, nil)
+
+	valid, valErrs := v.ValidateQueryParams(request)
+	assert.True(t, valid, "JSON-encoded object should be valid for content/application/json param")
+	for _, ve := range valErrs {
+		t.Errorf("unexpected validation error: %s | %s", ve.Message, ve.Reason)
+	}
+}
