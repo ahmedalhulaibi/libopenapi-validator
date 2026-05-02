@@ -126,6 +126,30 @@ func ValidateQueryArray(
 		renderedItemsSchema = string(schemaBytes)
 	}
 
+	// When the parameter uses content/application/json encoding and the
+	// raw value is a JSON array (e.g. "[1,2,3]"), decode it and validate
+	// the decoded value against the schema directly instead of per-item
+	// string parsing. Non-array JSON values (exploded objects) fall through
+	// to the existing per-item validation below.
+	if contentWrapped && strings.HasPrefix(strings.TrimSpace(ef), "[") {
+		var decoded interface{}
+		if err := json.Unmarshal([]byte(ef), &decoded); err != nil {
+			return []*errors.ValidationError{
+				errors.IncorrectParamEncodingJSON(param, ef, sch, pathTemplate, operation, renderedSchema),
+			}
+		}
+		return ValidateSingleParameterSchema(sch, decoded,
+			"Query array parameter",
+			"The query parameter (which is an array)",
+			param.Name,
+			helpers.ParameterValidation,
+			helpers.ParameterValidationQuery,
+			validationOptions,
+			pathTemplate,
+			operation,
+		)
+	}
+
 	// check for an exploded bit on the schema.
 	// if it's exploded, then we need to check each item in the array
 	// if it's not exploded, then we need to check the whole array as a string
